@@ -1,0 +1,20 @@
+[package]
+name = "tabitha"
+version = "0.0.1"
+rust-version = "1.92"
+authors = ["Zibi Braniecki"]
+edition = "2021"
+repository = "https://github.com/zbraniecki/tabitha"
+license = "MIT OR Apache-2.0"
+categories = ["tui"]
+
+[dependencies]
+ratatui = { version = "0.30" }
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+futures = "0.3"
+smallvec = "1.13"
+
+[features]
+default = []
+blocking-tasks = []

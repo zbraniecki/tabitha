@@ -1,5 +1,6 @@
 [package]
 name = "tabitha"
+description = "TUI Framework"
 version = "0.0.1"
 rust-version = "1.92"
 authors = ["Zibi Braniecki"]

@@ -7,7 +7,7 @@ authors = ["Zibi Braniecki"]
 edition = "2021"
 repository = "https://github.com/zbraniecki/tabitha"
 license = "MIT OR Apache-2.0"
-categories = ["tui"]
+categories = ["command-line-interface"]
 
 [dependencies]
 ratatui = { version = "0.30" }

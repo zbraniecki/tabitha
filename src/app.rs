@@ -18,6 +18,7 @@ use crate::focus::FocusManager;
 use crate::tabs::{Tab, TabManager};
 use crate::task::{BoxedTaskFuture, Task, TaskContext, TaskFactory, TaskHandle};
 use crate::terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
+use crate::widget::ModalManager;
 
 /// Error type for application operations.
 #[derive(Debug)]
@@ -119,6 +120,7 @@ pub struct AppBuilder<M: MainUi> {
     bus: MessageBus,
     tab_manager: TabManager,
     focus_manager: FocusManager,
+    modal_manager: ModalManager,
     tick_rate: Option<Duration>,
     mouse_capture: bool,
 }
@@ -132,6 +134,7 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             bus: MessageBus::new(),
             tab_manager: TabManager::new(),
             focus_manager: FocusManager::new(),
+            modal_manager: ModalManager::new(),
             tick_rate: None,
             mouse_capture: true,
         }
@@ -215,6 +218,7 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             bus: self.bus,
             tab_manager: self.tab_manager,
             focus_manager: self.focus_manager,
+            modal_manager: self.modal_manager,
             tick_rate: self.tick_rate,
             terminal_config: TerminalConfig {
                 mouse_capture: self.mouse_capture,
@@ -255,6 +259,7 @@ pub struct App<M: MainUi> {
     bus: MessageBus,
     tab_manager: TabManager,
     focus_manager: FocusManager,
+    modal_manager: ModalManager,
     tick_rate: Option<Duration>,
     terminal_config: TerminalConfig,
 }
@@ -348,6 +353,7 @@ impl<M: MainUi + 'static> App<M> {
                                     terminal,
                                     &mut self.tab_manager,
                                     &mut self.focus_manager,
+                                    &mut self.modal_manager,
                                 );
                                 let redraw = self.main_ui.handle_task_message(
                                     task_message.task_name,
@@ -367,6 +373,7 @@ impl<M: MainUi + 'static> App<M> {
                             terminal,
                             &mut self.tab_manager,
                             &mut self.focus_manager,
+                            &mut self.modal_manager,
                         );
                         self.main_ui.tick(&mut ctx);
                         should_quit = ctx.should_quit();
@@ -398,6 +405,7 @@ impl<M: MainUi + 'static> App<M> {
                                     terminal,
                                     &mut self.tab_manager,
                                     &mut self.focus_manager,
+                                    &mut self.modal_manager,
                                 );
                                 let redraw = self.main_ui.handle_task_message(
                                     task_message.task_name,
@@ -419,13 +427,29 @@ impl<M: MainUi + 'static> App<M> {
 
             // Dispatch event if we have one
             if let Some(event) = event_to_dispatch {
-                // Two-phase event dispatch to handle borrow conflicts:
+                // Three-phase event dispatch:
                 //
+                // Phase 0: Modal handles the event first (if open)
+                // Modal events are handled by ModalManager before main UI
+                let modal_consumed = self.modal_manager.handle_event(&event);
+
                 // Phase 1: MainUi handles the event (can handle quit, tab switching, etc.)
+                // Also allows MainUi to check modal results
                 let main_result = {
-                    let mut ctx =
-                        AppContext::new(terminal, &mut self.tab_manager, &mut self.focus_manager);
-                    let result = self.main_ui.handle_event(&event, &mut ctx);
+                    let mut ctx = AppContext::new(
+                        terminal,
+                        &mut self.tab_manager,
+                        &mut self.focus_manager,
+                        &mut self.modal_manager,
+                    );
+                    let result = if modal_consumed {
+                        // Modal consumed the event, but still call MainUi
+                        // so it can check for modal results
+                        self.main_ui.handle_event(&event, &mut ctx);
+                        crate::focus::EventResult::StopPropagation
+                    } else {
+                        self.main_ui.handle_event(&event, &mut ctx)
+                    };
                     should_quit = ctx.should_quit();
                     result
                 };
@@ -458,7 +482,10 @@ impl<M: MainUi + 'static> App<M> {
         let draw_ctx = DrawContext::new(&self.tab_manager, &self.focus_manager);
         terminal.draw(|frame| {
             let area = frame.area();
+            // Draw main UI first
             self.main_ui.draw(frame, area, &draw_ctx);
+            // Draw modal on top (if open)
+            self.modal_manager.draw(frame, area);
         })?;
         Ok(())
     }

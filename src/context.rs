@@ -9,6 +9,7 @@ use ratatui::{layout::Rect, Frame};
 use crate::focus::FocusManager;
 use crate::tabs::{TabInfo, TabManager};
 use crate::terminal::{Terminal, TerminalError};
+use crate::widget::{Modal, ModalManager, ModalResult};
 
 // =============================================================================
 // TabEventContext - Context for Tab event handlers (no TabManager access)
@@ -116,6 +117,7 @@ pub struct AppContext<'a> {
     pub(crate) terminal: &'a mut Terminal,
     pub(crate) tab_manager: &'a mut TabManager,
     pub(crate) focus_manager: &'a mut FocusManager,
+    pub(crate) modal_manager: &'a mut ModalManager,
     pub(crate) should_quit: bool,
 }
 
@@ -125,11 +127,13 @@ impl<'a> AppContext<'a> {
         terminal: &'a mut Terminal,
         tab_manager: &'a mut TabManager,
         focus_manager: &'a mut FocusManager,
+        modal_manager: &'a mut ModalManager,
     ) -> Self {
         Self {
             terminal,
             tab_manager,
             focus_manager,
+            modal_manager,
             should_quit: false,
         }
     }
@@ -214,6 +218,40 @@ impl<'a> AppContext<'a> {
             manager: self.focus_manager,
         }
     }
+
+    /// Access modal controls for event handling.
+    ///
+    /// Use this to open modals and check results.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::{Modal, ModalButton, ModalResult};
+    ///
+    /// // Open a modal
+    /// ctx.modal().open(
+    ///     Modal::new("confirm", "Are you sure?")
+    ///         .with_title("Confirm")
+    ///         .with_button(ModalButton::new("yes", "Yes"))
+    ///         .with_button(ModalButton::new("no", "No"))
+    /// );
+    ///
+    /// // Check for results from closed modals
+    /// if let Some((modal_id, result)) = ctx.modal().take_result() {
+    ///     match (modal_id.as_str(), result) {
+    ///         ("confirm", ModalResult::ButtonPressed(id)) if id == "yes" => {
+    ///             // Handle confirmation
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[inline]
+    pub fn modal(&mut self) -> ModalEventContext<'_> {
+        ModalEventContext {
+            manager: self.modal_manager,
+        }
+    }
 }
 
 /// Focus controls available during event handling.
@@ -270,6 +308,85 @@ impl FocusEventContext<'_> {
     /// Unregister a focusable element.
     pub fn unregister(&mut self, id: &str) {
         self.manager.unregister(id);
+    }
+}
+
+/// Modal controls available during event handling.
+///
+/// Access this through `AppContext::modal()`.
+pub struct ModalEventContext<'a> {
+    manager: &'a mut ModalManager,
+}
+
+impl ModalEventContext<'_> {
+    /// Open a modal dialog.
+    ///
+    /// If another modal is currently open, it will be closed first with
+    /// `ModalResult::Closed`. The new modal is opened immediately.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// ctx.modal().open(
+    ///     Modal::new("confirm", "Are you sure?")
+    ///         .with_title("Confirm")
+    ///         .with_button(ModalButton::new("yes", "Yes"))
+    ///         .with_button(ModalButton::new("no", "No"))
+    /// );
+    /// ```
+    pub fn open(&mut self, modal: Modal) {
+        self.manager.open(modal);
+    }
+
+    /// Close the current modal programmatically.
+    ///
+    /// Sets the result to `ModalResult::Closed`. Does nothing if no modal is open.
+    pub fn close(&mut self) {
+        self.manager.close();
+    }
+
+    /// Check if a modal is currently open.
+    pub fn is_open(&self) -> bool {
+        self.manager.is_open()
+    }
+
+    /// Get the ID of the currently open modal.
+    pub fn current_id(&self) -> Option<&str> {
+        self.manager.current_id()
+    }
+
+    /// Take the result from the last closed modal.
+    ///
+    /// Returns `Some((modal_id, result))` if a modal was recently closed,
+    /// `None` otherwise. The result is cleared after being taken.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if let Some((modal_id, result)) = ctx.modal().take_result() {
+    ///     match (modal_id.as_str(), result) {
+    ///         ("confirm", ModalResult::ButtonPressed(id)) if id == "yes" => {
+    ///             // User confirmed
+    ///         }
+    ///         ("confirm", ModalResult::Dismissed) => {
+    ///             // User pressed Escape
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    pub fn take_result(&mut self) -> Option<(String, ModalResult)> {
+        self.manager.take_result()
+    }
+
+    /// Peek at the result without consuming it.
+    pub fn result(&self) -> Option<(&str, &ModalResult)> {
+        self.manager.result()
+    }
+
+    /// Get the ID of the last closed modal.
+    pub fn last_id(&self) -> Option<&str> {
+        self.manager.last_id()
     }
 }
 

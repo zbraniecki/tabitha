@@ -109,8 +109,8 @@ pub use app::{App, AppBuilder, AppError, BuildError};
 pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};
 pub use component::{BoxedComponent, Component, ComponentExt, MainUi};
 pub use context::{
-    AppContext, DrawContext, FocusDrawContext, FocusEventContext, TabEventContext, TabsDrawContext,
-    TabsEventContext,
+    AppContext, DrawContext, FocusDrawContext, FocusEventContext, ModalEventContext,
+    TabEventContext, TabsDrawContext, TabsEventContext,
 };
 pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 pub use focus::{EventResult, FocusManager};
@@ -125,8 +125,9 @@ pub use task::{spawn_blocking, spawn_blocking_unwrap};
 // Re-export widget types
 pub use widget::{
     BoxedControl, Column, ColumnAlign, ColumnType, ColumnWidth, Control, ControlEvent, ControlExt,
-    CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, SelectionMode, SimpleRow,
-    SortDirection, SortState, TableRow, TextBox, TextBoxConfig, TextBoxEvent,
+    CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, Modal, ModalButton, ModalConfig,
+    ModalInput, ModalManager, ModalResult, SelectionMode, SimpleRow, SortDirection, SortState,
+    TableRow, TextBox, TextBoxConfig, TextBoxEvent,
 };
 
 // Re-export ratatui types that users commonly need

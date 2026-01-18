@@ -102,6 +102,7 @@ pub mod focus;
 pub mod tabs;
 pub mod task;
 pub mod terminal;
+pub mod widget;
 
 // Re-export main types at crate root for convenience
 pub use app::{App, AppBuilder, AppError, BuildError};
@@ -120,6 +121,12 @@ pub use terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
 // Conditionally re-export blocking task helpers
 #[cfg(feature = "blocking-tasks")]
 pub use task::{spawn_blocking, spawn_blocking_unwrap};
+
+// Re-export widget types
+pub use widget::{
+    BoxedControl, Control, ControlEvent, ControlExt, CursorBlinkConfig, TextBox, TextBoxConfig,
+    TextBoxEvent,
+};
 
 // Re-export ratatui types that users commonly need
 pub use ratatui::{layout::Rect, Frame};

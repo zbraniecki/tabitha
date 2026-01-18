@@ -1,0 +1,819 @@
+//! TextBox widget for single-line text input.
+//!
+//! The TextBox provides a text input field with:
+//! - Cursor navigation (Home, End, Left, Right)
+//! - Text editing (insert, delete, backspace)
+//! - Cursor blinking (configurable)
+//! - Event emission for changes, key events, and submission
+//! - Optional placeholder text
+//! - Optional password masking
+//!
+//! # Example
+//!
+//! ```ignore
+//! use tabitha::widget::{TextBox, TextBoxConfig, TextBoxEvent};
+//!
+//! let mut textbox = TextBox::new("username")
+//!     .with_placeholder("Enter username...");
+//!
+//! // In handle_event:
+//! textbox.handle_event(&event);
+//! for evt in textbox.take_events() {
+//!     match evt {
+//!         TextBoxEvent::Changed(text) => println!("Text changed: {}", text),
+//!         TextBoxEvent::Submit(text) => println!("Submitted: {}", text),
+//!         _ => {}
+//!     }
+//! }
+//! ```
+
+use std::cell::Cell;
+use std::time::Instant;
+
+use ratatui::{
+    layout::Rect,
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+    Frame,
+};
+
+use crate::event::{Event, KeyCode, KeyModifiers};
+use crate::focus::EventResult;
+use crate::widget::{Control, ControlEvent, CursorBlinkConfig};
+
+/// Events emitted by TextBox.
+#[derive(Debug, Clone)]
+pub enum TextBoxEvent {
+    /// Text content changed. Contains the new text.
+    Changed(String),
+    /// Enter was pressed. Contains the current text.
+    Submit(String),
+    /// A key was pressed. Contains the key code.
+    KeyDown(KeyCode),
+    /// A key was released. Contains the key code.
+    KeyUp(KeyCode),
+    /// Focus was gained.
+    FocusGained,
+    /// Focus was lost.
+    FocusLost,
+}
+
+impl ControlEvent for TextBoxEvent {}
+
+/// Configuration for TextBox appearance and behavior.
+#[derive(Debug, Clone)]
+pub struct TextBoxConfig {
+    /// Cursor blink configuration.
+    pub cursor_blink: CursorBlinkConfig,
+    /// Style for the text when focused.
+    pub focused_style: Style,
+    /// Style for the text when unfocused.
+    pub unfocused_style: Style,
+    /// Style for the border when focused.
+    pub focused_border_style: Style,
+    /// Style for the border when unfocused.
+    pub unfocused_border_style: Style,
+    /// Style for placeholder text.
+    pub placeholder_style: Style,
+    /// Style for the cursor.
+    pub cursor_style: Style,
+    /// Whether to mask input (password field).
+    pub password_mask: Option<char>,
+    /// Maximum length of input (None for unlimited).
+    pub max_length: Option<usize>,
+}
+
+impl Default for TextBoxConfig {
+    fn default() -> Self {
+        Self {
+            cursor_blink: CursorBlinkConfig::default(),
+            focused_style: Style::default().fg(Color::White),
+            unfocused_style: Style::default().fg(Color::Gray),
+            focused_border_style: Style::default().fg(Color::Yellow),
+            unfocused_border_style: Style::default().fg(Color::DarkGray),
+            placeholder_style: Style::default().fg(Color::DarkGray),
+            cursor_style: Style::default().bg(Color::White).fg(Color::Black),
+            password_mask: None,
+            max_length: None,
+        }
+    }
+}
+
+impl TextBoxConfig {
+    /// Create a password field configuration.
+    pub fn password() -> Self {
+        Self {
+            password_mask: Some('•'),
+            ..Default::default()
+        }
+    }
+
+    /// Set the password mask character.
+    pub fn with_mask(mut self, mask: char) -> Self {
+        self.password_mask = Some(mask);
+        self
+    }
+
+    /// Set the maximum input length.
+    pub fn with_max_length(mut self, max: usize) -> Self {
+        self.max_length = Some(max);
+        self
+    }
+
+    /// Set the cursor blink configuration.
+    pub fn with_cursor_blink(mut self, config: CursorBlinkConfig) -> Self {
+        self.cursor_blink = config;
+        self
+    }
+}
+
+/// A single-line text input widget.
+pub struct TextBox {
+    /// Unique identifier for focus tracking.
+    id: String,
+    /// The text content.
+    text: String,
+    /// Cursor position (character index).
+    cursor_pos: usize,
+    /// Optional placeholder text shown when empty.
+    placeholder: Option<String>,
+    /// Optional title/label for the border.
+    title: Option<String>,
+    /// Configuration.
+    config: TextBoxConfig,
+    /// Whether cursor is currently visible (for blinking).
+    cursor_visible: bool,
+    /// Last time cursor visibility was toggled.
+    last_blink: Option<Instant>,
+    /// Pending events to be consumed by parent.
+    events: Vec<TextBoxEvent>,
+    /// Scroll offset for long text (Cell for interior mutability in draw).
+    scroll_offset: Cell<usize>,
+}
+
+impl TextBox {
+    /// Create a new TextBox with the given focus ID.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            text: String::new(),
+            cursor_pos: 0,
+            placeholder: None,
+            title: None,
+            config: TextBoxConfig::default(),
+            cursor_visible: true,
+            last_blink: None,
+            events: Vec::new(),
+            scroll_offset: Cell::new(0),
+        }
+    }
+
+    /// Set the placeholder text.
+    pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = Some(placeholder.into());
+        self
+    }
+
+    /// Set the border title.
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the configuration.
+    pub fn with_config(mut self, config: TextBoxConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Set initial text content.
+    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+        self.text = text.into();
+        self.cursor_pos = self.text.chars().count();
+        self
+    }
+
+    /// Get the focus ID.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Get the current text content.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Set the text content programmatically.
+    pub fn set_text(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+        let char_count = self.text.chars().count();
+        if self.cursor_pos > char_count {
+            self.cursor_pos = char_count;
+        }
+    }
+
+    /// Get the cursor position (character index).
+    pub fn cursor_pos(&self) -> usize {
+        self.cursor_pos
+    }
+
+    /// Set the cursor position.
+    pub fn set_cursor_pos(&mut self, pos: usize) {
+        let max_pos = self.text.chars().count();
+        self.cursor_pos = pos.min(max_pos);
+    }
+
+    /// Clear the text content.
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.cursor_pos = 0;
+        self.scroll_offset.set(0);
+    }
+
+    /// Get a reference to the configuration.
+    pub fn config(&self) -> &TextBoxConfig {
+        &self.config
+    }
+
+    /// Get a mutable reference to the configuration.
+    pub fn config_mut(&mut self) -> &mut TextBoxConfig {
+        &mut self.config
+    }
+
+    // --- Internal helpers ---
+
+    /// Insert a character at the cursor position.
+    fn insert_char(&mut self, c: char) {
+        // Check max length
+        if let Some(max) = self.config.max_length {
+            if self.text.chars().count() >= max {
+                return;
+            }
+        }
+
+        // Convert cursor position to byte index
+        let byte_idx = self
+            .text
+            .char_indices()
+            .nth(self.cursor_pos)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+
+        self.text.insert(byte_idx, c);
+        self.cursor_pos += 1;
+        self.emit(TextBoxEvent::Changed(self.text.clone()));
+    }
+
+    /// Delete the character at the cursor position.
+    fn delete_char(&mut self) {
+        let char_count = self.text.chars().count();
+        if self.cursor_pos < char_count {
+            let byte_idx = self
+                .text
+                .char_indices()
+                .nth(self.cursor_pos)
+                .map(|(i, _)| i)
+                .unwrap();
+            self.text.remove(byte_idx);
+            self.emit(TextBoxEvent::Changed(self.text.clone()));
+        }
+    }
+
+    /// Delete the character before the cursor (backspace).
+    fn backspace(&mut self) {
+        if self.cursor_pos > 0 {
+            self.cursor_pos -= 1;
+            self.delete_char();
+        }
+    }
+
+    /// Move cursor left.
+    fn move_left(&mut self) {
+        if self.cursor_pos > 0 {
+            self.cursor_pos -= 1;
+        }
+    }
+
+    /// Move cursor right.
+    fn move_right(&mut self) {
+        let char_count = self.text.chars().count();
+        if self.cursor_pos < char_count {
+            self.cursor_pos += 1;
+        }
+    }
+
+    /// Move cursor to start.
+    fn move_home(&mut self) {
+        self.cursor_pos = 0;
+    }
+
+    /// Move cursor to end.
+    fn move_end(&mut self) {
+        self.cursor_pos = self.text.chars().count();
+    }
+
+    /// Move cursor one word left.
+    fn move_word_left(&mut self) {
+        if self.cursor_pos == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.text.chars().collect();
+        let mut pos = self.cursor_pos - 1;
+
+        // Skip whitespace
+        while pos > 0 && chars[pos].is_whitespace() {
+            pos -= 1;
+        }
+
+        // Skip word characters
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        self.cursor_pos = pos;
+    }
+
+    /// Move cursor one word right.
+    fn move_word_right(&mut self) {
+        let chars: Vec<char> = self.text.chars().collect();
+        let len = chars.len();
+
+        if self.cursor_pos >= len {
+            return;
+        }
+
+        let mut pos = self.cursor_pos;
+
+        // Skip current word
+        while pos < len && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        // Skip whitespace
+        while pos < len && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        self.cursor_pos = pos;
+    }
+
+    /// Delete word before cursor.
+    fn delete_word_back(&mut self) {
+        if self.cursor_pos == 0 {
+            return;
+        }
+
+        let old_pos = self.cursor_pos;
+        self.move_word_left();
+        let chars_to_delete = old_pos - self.cursor_pos;
+
+        for _ in 0..chars_to_delete {
+            self.delete_char();
+        }
+    }
+
+    /// Emit an event.
+    fn emit(&mut self, event: TextBoxEvent) {
+        self.events.push(event);
+    }
+
+    /// Reset cursor blink state (make cursor visible).
+    fn reset_blink(&mut self) {
+        self.cursor_visible = true;
+        self.last_blink = Some(Instant::now());
+    }
+
+    /// Calculate the display text (potentially masked).
+    fn display_text(&self) -> String {
+        if let Some(mask) = self.config.password_mask {
+            mask.to_string().repeat(self.text.chars().count())
+        } else {
+            self.text.clone()
+        }
+    }
+}
+
+impl Control for TextBox {
+    type Event = TextBoxEvent;
+
+    fn draw(&self, frame: &mut Frame, area: Rect, focused: bool) {
+        // Determine styles based on focus
+        let (text_style, border_style) = if focused {
+            (self.config.focused_style, self.config.focused_border_style)
+        } else {
+            (
+                self.config.unfocused_style,
+                self.config.unfocused_border_style,
+            )
+        };
+
+        // Create block with optional title
+        let mut block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style);
+
+        if let Some(ref title) = self.title {
+            block = block.title(format!(" {} ", title));
+        }
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        // Calculate visible width (accounting for borders)
+        let visible_width = inner.width as usize;
+
+        // Get display text
+        let display = self.display_text();
+        let is_empty = display.is_empty();
+
+        // Update scroll to keep cursor visible (using Cell for interior mutability)
+        if visible_width > 0 {
+            let mut scroll_offset = self.scroll_offset.get();
+            if self.cursor_pos < scroll_offset {
+                scroll_offset = self.cursor_pos;
+            } else if self.cursor_pos >= scroll_offset + visible_width {
+                scroll_offset = self.cursor_pos.saturating_sub(visible_width - 1);
+            }
+            self.scroll_offset.set(scroll_offset);
+        }
+        let scroll_offset = self.scroll_offset.get();
+
+        // Determine what to show
+        if is_empty {
+            // Empty text - show placeholder (with blinking first char when focused)
+            if let Some(ref placeholder) = self.placeholder {
+                if focused {
+                    // Cursor blinks on the first character of the placeholder
+                    let mut chars = placeholder.chars();
+                    if let Some(first_char) = chars.next() {
+                        let rest: String = chars.collect();
+                        let first_style = if self.cursor_visible {
+                            self.config.cursor_style
+                        } else {
+                            self.config.placeholder_style
+                        };
+                        let spans = vec![
+                            Span::styled(first_char.to_string(), first_style),
+                            Span::styled(rest, self.config.placeholder_style),
+                        ];
+                        let line = Line::from(spans);
+                        let para = Paragraph::new(line);
+                        frame.render_widget(para, inner);
+                    }
+                } else {
+                    // Not focused - show placeholder normally
+                    let para =
+                        Paragraph::new(placeholder.as_str()).style(self.config.placeholder_style);
+                    frame.render_widget(para, inner);
+                }
+            } else if focused && self.cursor_visible {
+                // No placeholder, just show cursor block
+                let cursor_span = Span::styled(" ", self.config.cursor_style);
+                let line = Line::from(vec![cursor_span]);
+                let para = Paragraph::new(line);
+                frame.render_widget(para, inner);
+            }
+        } else {
+            // Has text - show text with cursor when focused
+            let chars: Vec<char> = display.chars().collect();
+            let scroll = scroll_offset.min(chars.len());
+
+            // Build visible portion
+            let visible_chars: String = chars.iter().skip(scroll).take(visible_width).collect();
+
+            if focused {
+                // Cursor position relative to scroll
+                let cursor_rel = self.cursor_pos.saturating_sub(scroll);
+
+                if cursor_rel <= visible_width {
+                    // Build spans: before cursor, cursor char, after cursor
+                    let before: String = visible_chars.chars().take(cursor_rel).collect();
+                    let cursor_char = visible_chars
+                        .chars()
+                        .nth(cursor_rel)
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| " ".to_string());
+                    let after: String = visible_chars.chars().skip(cursor_rel + 1).collect();
+
+                    // Cursor char uses cursor style only when visible (blinking)
+                    let cursor_char_style = if self.cursor_visible {
+                        self.config.cursor_style
+                    } else {
+                        text_style
+                    };
+
+                    let spans = vec![
+                        Span::styled(before, text_style),
+                        Span::styled(cursor_char, cursor_char_style),
+                        Span::styled(after, text_style),
+                    ];
+
+                    let line = Line::from(spans);
+                    let para = Paragraph::new(line);
+                    frame.render_widget(para, inner);
+                } else {
+                    // Cursor not in visible area
+                    let para = Paragraph::new(visible_chars).style(text_style);
+                    frame.render_widget(para, inner);
+                }
+            } else {
+                // Not focused - no cursor
+                let para = Paragraph::new(visible_chars).style(text_style);
+                frame.render_widget(para, inner);
+            }
+        }
+    }
+
+    fn handle_event(&mut self, event: &Event) -> EventResult {
+        match event {
+            Event::Key(key) => {
+                // Emit KeyDown event
+                self.emit(TextBoxEvent::KeyDown(key.code));
+
+                // Reset cursor blink on any key press
+                self.reset_blink();
+
+                let handled = match key.code {
+                    // Character input
+                    KeyCode::Char(c) => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            match c {
+                                'a' => {
+                                    self.move_home();
+                                    true
+                                }
+                                'e' => {
+                                    self.move_end();
+                                    true
+                                }
+                                'w' => {
+                                    self.delete_word_back();
+                                    true
+                                }
+                                'u' => {
+                                    // Delete from cursor to start
+                                    let new_text: String =
+                                        self.text.chars().skip(self.cursor_pos).collect();
+                                    self.text = new_text;
+                                    self.cursor_pos = 0;
+                                    self.emit(TextBoxEvent::Changed(self.text.clone()));
+                                    true
+                                }
+                                'k' => {
+                                    // Delete from cursor to end
+                                    self.text = self.text.chars().take(self.cursor_pos).collect();
+                                    self.emit(TextBoxEvent::Changed(self.text.clone()));
+                                    true
+                                }
+                                _ => false,
+                            }
+                        } else if key.modifiers.contains(KeyModifiers::ALT) {
+                            match c {
+                                'b' => {
+                                    self.move_word_left();
+                                    true
+                                }
+                                'f' => {
+                                    self.move_word_right();
+                                    true
+                                }
+                                _ => false,
+                            }
+                        } else {
+                            self.insert_char(c);
+                            true
+                        }
+                    }
+
+                    // Navigation
+                    KeyCode::Left => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            || key.modifiers.contains(KeyModifiers::ALT)
+                        {
+                            self.move_word_left();
+                        } else {
+                            self.move_left();
+                        }
+                        true
+                    }
+                    KeyCode::Right => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            || key.modifiers.contains(KeyModifiers::ALT)
+                        {
+                            self.move_word_right();
+                        } else {
+                            self.move_right();
+                        }
+                        true
+                    }
+                    KeyCode::Home => {
+                        self.move_home();
+                        true
+                    }
+                    KeyCode::End => {
+                        self.move_end();
+                        true
+                    }
+
+                    // Editing
+                    KeyCode::Backspace => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            || key.modifiers.contains(KeyModifiers::ALT)
+                        {
+                            self.delete_word_back();
+                        } else {
+                            self.backspace();
+                        }
+                        true
+                    }
+                    KeyCode::Delete => {
+                        self.delete_char();
+                        true
+                    }
+
+                    // Submission
+                    KeyCode::Enter => {
+                        self.emit(TextBoxEvent::Submit(self.text.clone()));
+                        true
+                    }
+
+                    _ => false,
+                };
+
+                if handled {
+                    EventResult::Handled
+                } else {
+                    EventResult::Unhandled
+                }
+            }
+
+            Event::Paste(text) => {
+                // Handle paste event
+                for c in text.chars() {
+                    if c == '\n' || c == '\r' {
+                        continue; // Skip newlines in single-line input
+                    }
+                    self.insert_char(c);
+                }
+                self.reset_blink();
+                EventResult::Handled
+            }
+
+            _ => EventResult::Unhandled,
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        if !self.config.cursor_blink.enabled {
+            return false;
+        }
+
+        let now = Instant::now();
+        let last = self.last_blink.get_or_insert(now);
+        let elapsed = now.duration_since(*last).as_millis() as u64;
+
+        let toggle_time = if self.cursor_visible {
+            self.config.cursor_blink.on_duration_ms
+        } else {
+            self.config.cursor_blink.off_duration_ms
+        };
+
+        if elapsed >= toggle_time {
+            self.cursor_visible = !self.cursor_visible;
+            self.last_blink = Some(now);
+            true // Needs redraw
+        } else {
+            false
+        }
+    }
+
+    fn take_events(&mut self) -> Vec<TextBoxEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
+    fn on_focus(&mut self) {
+        self.reset_blink();
+        self.emit(TextBoxEvent::FocusGained);
+    }
+
+    fn on_blur(&mut self) {
+        self.cursor_visible = false;
+        self.emit(TextBoxEvent::FocusLost);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_textbox_insert() {
+        let mut tb = TextBox::new("test");
+        tb.insert_char('H');
+        tb.insert_char('i');
+        assert_eq!(tb.text(), "Hi");
+        assert_eq!(tb.cursor_pos(), 2);
+    }
+
+    #[test]
+    fn test_textbox_backspace() {
+        let mut tb = TextBox::new("test").with_text("Hello");
+        tb.backspace();
+        assert_eq!(tb.text(), "Hell");
+        assert_eq!(tb.cursor_pos(), 4);
+    }
+
+    #[test]
+    fn test_textbox_cursor_movement() {
+        let mut tb = TextBox::new("test").with_text("Hello");
+        assert_eq!(tb.cursor_pos(), 5);
+
+        tb.move_home();
+        assert_eq!(tb.cursor_pos(), 0);
+
+        tb.move_end();
+        assert_eq!(tb.cursor_pos(), 5);
+
+        tb.move_left();
+        assert_eq!(tb.cursor_pos(), 4);
+
+        tb.move_right();
+        assert_eq!(tb.cursor_pos(), 5);
+    }
+
+    #[test]
+    fn test_textbox_word_movement() {
+        let mut tb = TextBox::new("test").with_text("hello world foo");
+        assert_eq!(tb.cursor_pos(), 15);
+
+        tb.move_word_left();
+        assert_eq!(tb.cursor_pos(), 12); // start of "foo"
+
+        tb.move_word_left();
+        assert_eq!(tb.cursor_pos(), 6); // start of "world"
+
+        tb.move_word_right();
+        assert_eq!(tb.cursor_pos(), 12); // start of "foo"
+    }
+
+    #[test]
+    fn test_textbox_max_length() {
+        let mut tb = TextBox::new("test").with_config(TextBoxConfig::default().with_max_length(5));
+
+        for c in "Hello World".chars() {
+            tb.insert_char(c);
+        }
+
+        assert_eq!(tb.text(), "Hello");
+        assert_eq!(tb.text().len(), 5);
+    }
+
+    #[test]
+    fn test_textbox_password_mask() {
+        let tb = TextBox::new("test")
+            .with_config(TextBoxConfig::password())
+            .with_text("secret");
+
+        assert_eq!(tb.display_text(), "••••••");
+    }
+
+    #[test]
+    fn test_textbox_events() {
+        let mut tb = TextBox::new("test");
+        tb.insert_char('a');
+
+        let events = tb.take_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], TextBoxEvent::Changed(ref s) if s == "a"));
+
+        // Events should be drained
+        assert!(!tb.has_events());
+        assert!(tb.take_events().is_empty());
+    }
+
+    #[test]
+    fn test_textbox_unicode() {
+        let mut tb = TextBox::new("test");
+        tb.insert_char('こ');
+        tb.insert_char('ん');
+        tb.insert_char('に');
+        tb.insert_char('ち');
+        tb.insert_char('は');
+
+        assert_eq!(tb.text(), "こんにちは");
+        assert_eq!(tb.cursor_pos(), 5);
+
+        tb.move_left();
+        tb.move_left();
+        assert_eq!(tb.cursor_pos(), 3);
+
+        tb.backspace();
+        assert_eq!(tb.text(), "こんちは");
+    }
+}

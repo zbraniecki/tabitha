@@ -2,6 +2,9 @@
 
 An async, event-driven TUI framework built on [ratatui](https://github.com/ratatui-org/ratatui) and [tokio](https://tokio.rs/).
 
+
+[![Demo Screencast](./assets/tabitha-0.0.2.gif)](https://asciinema.org/a/qkqijJT7T68xSYZT)
+
 ## Overview
 
 Tabitha provides a clean, power-efficient architecture for building terminal user interfaces. It's designed around an event-driven model that only redraws when necessary, making it ideal for applications that need to minimize CPU usage.

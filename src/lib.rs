@@ -124,8 +124,9 @@ pub use task::{spawn_blocking, spawn_blocking_unwrap};
 
 // Re-export widget types
 pub use widget::{
-    BoxedControl, Control, ControlEvent, ControlExt, CursorBlinkConfig, TextBox, TextBoxConfig,
-    TextBoxEvent,
+    BoxedControl, Column, ColumnAlign, ColumnType, ColumnWidth, Control, ControlEvent, ControlExt,
+    CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, SelectionMode, SimpleRow,
+    SortDirection, SortState, TableRow, TextBox, TextBoxConfig, TextBoxEvent,
 };
 
 // Re-export ratatui types that users commonly need

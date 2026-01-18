@@ -1,7 +1,7 @@
 [package]
 name = "tabitha"
-description = "TUI Framework"
-version = "0.0.1"
+description = "An async, event-driven TUI framework with component-based architecture, focus management, and theme support"
+version = "0.0.2"
 rust-version = "1.92"
 authors = ["Zibi Braniecki"]
 edition = "2021"
@@ -11,10 +11,10 @@ categories = ["command-line-interface"]
 
 [dependencies]
 ratatui = { version = "0.30" }
-crossterm = { version = "0.28", features = ["event-stream"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures = "0.3"
-smallvec = "1.13"
+smallvec = "1.15"
 
 [features]
 default = []

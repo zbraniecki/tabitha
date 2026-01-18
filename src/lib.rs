@@ -102,6 +102,7 @@ pub mod focus;
 pub mod tabs;
 pub mod task;
 pub mod terminal;
+pub mod theme;
 pub mod widget;
 
 // Re-export main types at crate root for convenience
@@ -117,6 +118,7 @@ pub use focus::{EventResult, FocusManager};
 pub use tabs::{BoxedTab, Tab, TabInfo, TabManager};
 pub use task::{Task, TaskContext, TaskHandle};
 pub use terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
+pub use theme::Theme;
 
 // Conditionally re-export blocking task helpers
 #[cfg(feature = "blocking-tasks")]

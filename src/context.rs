@@ -9,6 +9,7 @@ use ratatui::{layout::Rect, Frame};
 use crate::focus::FocusManager;
 use crate::tabs::{TabInfo, TabManager};
 use crate::terminal::{Terminal, TerminalError};
+use crate::theme::Theme;
 use crate::widget::{Modal, ModalManager, ModalResult};
 
 // =============================================================================
@@ -489,6 +490,7 @@ impl TabsEventContext<'_> {
 /// Context passed to draw methods for rendering.
 ///
 /// `DrawContext` provides access to:
+/// - Theme colors and styles
 /// - Tab bar and content drawing
 /// - Tab information
 /// - Focus state (for visual highlighting)
@@ -505,11 +507,11 @@ impl TabsEventContext<'_> {
 ///     }
 ///
 ///     fn draw(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
-///         // Highlight when focused
+///         // Use theme colors for consistent styling
 ///         let style = if ctx.focus().is_focused("my_widget") {
-///             Style::default().fg(Color::Yellow)
+///             ctx.theme().highlight_style()
 ///         } else {
-///             Style::default()
+///             ctx.theme().style()
 ///         };
 ///         // Draw with style...
 ///     }
@@ -518,15 +520,40 @@ impl TabsEventContext<'_> {
 pub struct DrawContext<'a> {
     pub(crate) tab_manager: &'a TabManager,
     pub(crate) focus_manager: &'a FocusManager,
+    pub(crate) theme: &'a Theme,
 }
 
 impl<'a> DrawContext<'a> {
     /// Create a new draw context.
-    pub(crate) fn new(tab_manager: &'a TabManager, focus_manager: &'a FocusManager) -> Self {
+    pub(crate) fn new(
+        tab_manager: &'a TabManager,
+        focus_manager: &'a FocusManager,
+        theme: &'a Theme,
+    ) -> Self {
         Self {
             tab_manager,
             focus_manager,
+            theme,
         }
+    }
+
+    /// Access the current theme for styling.
+    ///
+    /// The theme provides semantic color roles that components can use
+    /// for consistent styling across the application.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Get a style for highlighted elements
+    /// let style = ctx.theme().highlight_style();
+    ///
+    /// // Get individual colors
+    /// let accent = ctx.theme().accent;
+    /// ```
+    #[inline]
+    pub fn theme(&self) -> &Theme {
+        self.theme
     }
 
     /// Access tab information and drawing methods.

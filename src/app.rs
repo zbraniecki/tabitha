@@ -18,6 +18,7 @@ use crate::focus::FocusManager;
 use crate::tabs::{Tab, TabManager};
 use crate::task::{BoxedTaskFuture, Task, TaskContext, TaskFactory, TaskHandle};
 use crate::terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
+use crate::theme::Theme;
 use crate::widget::ModalManager;
 
 /// Error type for application operations.
@@ -121,6 +122,7 @@ pub struct AppBuilder<M: MainUi> {
     tab_manager: TabManager,
     focus_manager: FocusManager,
     modal_manager: ModalManager,
+    theme: Theme,
     tick_rate: Option<Duration>,
     mouse_capture: bool,
 }
@@ -135,6 +137,7 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             tab_manager: TabManager::new(),
             focus_manager: FocusManager::new(),
             modal_manager: ModalManager::new(),
+            theme: Theme::default(),
             tick_rate: None,
             mouse_capture: true,
         }
@@ -206,6 +209,26 @@ impl<M: MainUi + 'static> AppBuilder<M> {
         self
     }
 
+    /// Set the application theme.
+    ///
+    /// The theme provides semantic color roles that components can use
+    /// for consistent styling. If not set, the default dark theme is used.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::{AppBuilder, Theme};
+    ///
+    /// let app = AppBuilder::new()
+    ///     .main_ui(MyApp::new())
+    ///     .with_theme(Theme::default())
+    ///     .build()?;
+    /// ```
+    pub fn with_theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
     /// Build the application.
     ///
     /// Returns an error if no main UI was provided.
@@ -219,6 +242,7 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             tab_manager: self.tab_manager,
             focus_manager: self.focus_manager,
             modal_manager: self.modal_manager,
+            theme: self.theme,
             tick_rate: self.tick_rate,
             terminal_config: TerminalConfig {
                 mouse_capture: self.mouse_capture,
@@ -260,6 +284,7 @@ pub struct App<M: MainUi> {
     tab_manager: TabManager,
     focus_manager: FocusManager,
     modal_manager: ModalManager,
+    theme: Theme,
     tick_rate: Option<Duration>,
     terminal_config: TerminalConfig,
 }
@@ -479,13 +504,20 @@ impl<M: MainUi + 'static> App<M> {
 
     /// Draw the UI.
     fn draw(&mut self, terminal: &mut Terminal) -> Result<(), AppError> {
-        let draw_ctx = DrawContext::new(&self.tab_manager, &self.focus_manager);
+        // Use dimmed theme for main UI when modal is open
+        let main_theme = if self.modal_manager.is_open() {
+            self.theme.dimmed()
+        } else {
+            self.theme.clone()
+        };
+
+        let draw_ctx = DrawContext::new(&self.tab_manager, &self.focus_manager, &main_theme);
         terminal.draw(|frame| {
             let area = frame.area();
-            // Draw main UI first
+            // Draw main UI first (with potentially dimmed theme)
             self.main_ui.draw(frame, area, &draw_ctx);
-            // Draw modal on top (if open)
-            self.modal_manager.draw(frame, area);
+            // Draw modal on top (if open) - modal uses full theme colors
+            self.modal_manager.draw(frame, area, &self.theme);
         })?;
         Ok(())
     }

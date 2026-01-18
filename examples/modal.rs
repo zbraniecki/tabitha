@@ -24,14 +24,14 @@ use std::time::Duration;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
 use tabitha::{
     AppBuilder, AppContext, Component, Control, DrawContext, Event, EventResult, KeyCode, MainUi,
-    Modal, ModalButton, ModalResult, TextBox,
+    Modal, ModalButton, ModalResult, TextBox, TextBoxConfig,
 };
 
 /// Main application state.
@@ -163,15 +163,19 @@ impl Component for ModalExample {
             ])
             .split(area);
 
-        // Title
+        // Title - use theme colors so it dims when modal is open
+        let theme = ctx.theme();
         let title = Paragraph::new("Modal Dialog Example (Centralized ModalManager)")
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(theme.accent))
             .block(Block::default().borders(Borders::BOTTOM));
         frame.render_widget(title, chunks[0]);
 
-        // TextBox
-        self.textbox
-            .draw(frame, chunks[1], ctx.focus().is_focused("input"));
+        // TextBox with theme-aware config so border dims when modal is open
+        // Focus is cleared when modal opens, so this will be false when modal is open
+        let textbox_focused = ctx.focus().is_focused("input");
+        let mut theme_textbox = self.textbox.clone();
+        theme_textbox = theme_textbox.with_config(TextBoxConfig::from_theme(theme));
+        theme_textbox.draw(frame, chunks[1], textbox_focused);
 
         // Instructions
         let instructions = Paragraph::new(
@@ -191,9 +195,9 @@ impl Component for ModalExample {
         );
         frame.render_widget(instructions, chunks[2]);
 
-        // Status
+        // Status - use theme highlight color so it dims when modal is open
         let status = Paragraph::new(self.status.as_str())
-            .style(Style::default().fg(Color::Yellow))
+            .style(Style::default().fg(theme.highlight))
             .block(Block::default().borders(Borders::ALL).title(" Status "));
         frame.render_widget(status, chunks[3]);
 
@@ -224,22 +228,26 @@ impl Component for ModalExample {
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Char('1') => {
+                    ctx.focus().clear_focus(); // Clear focus from main content when opening modal
                     ctx.modal().open(Self::create_alert_modal());
                     self.status = "Alert modal opened".to_string();
                     return EventResult::Handled;
                 }
                 KeyCode::Char('2') => {
+                    ctx.focus().clear_focus(); // Clear focus from main content when opening modal
                     ctx.modal().open(Self::create_confirm_modal());
                     self.status = "Confirmation modal opened".to_string();
                     return EventResult::Handled;
                 }
                 KeyCode::Char('3') => {
+                    ctx.focus().clear_focus(); // Clear focus from main content when opening modal
                     ctx.modal().open(Self::create_save_modal());
                     self.status = "Save dialog opened".to_string();
                     return EventResult::Handled;
                 }
                 KeyCode::Char('4') => {
                     // Demonstrate rapid succession - opening a new modal while one is open
+                    ctx.focus().clear_focus(); // Clear focus from main content when opening modal
                     ctx.modal().open(Self::create_alert_modal());
                     self.status = "First: alert modal opened...".to_string();
                     // Immediately open another - the first will be closed with ModalResult::Closed
@@ -249,6 +257,7 @@ impl Component for ModalExample {
                     return EventResult::Handled;
                 }
                 KeyCode::Char('5') => {
+                    ctx.focus().clear_focus(); // Clear focus from main content when opening modal
                     ctx.modal().open(Self::create_prompt_modal());
                     self.status = "Prompt modal opened - enter your name!".to_string();
                     return EventResult::Handled;

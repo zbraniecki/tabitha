@@ -43,6 +43,7 @@ use crate::component::Component;
 use crate::context::{AppContext, DrawContext};
 use crate::event::{Event, KeyCode, KeyModifiers};
 use crate::focus::EventResult;
+use crate::theme::Theme;
 
 /// A single button in the modal dialog.
 #[derive(Debug, Clone)]
@@ -647,7 +648,7 @@ impl Modal {
     }
 
     /// Draw the input field.
-    fn draw_input(&self, frame: &mut Frame, area: Rect) {
+    fn draw_input(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let Some(ref input) = self.input else {
             return;
         };
@@ -655,20 +656,23 @@ impl Modal {
         let is_focused = self.focus == ModalFocus::Input;
 
         // Draw label on first line
-        let label_line = Line::from(Span::styled(
-            format!("{}:", input.label),
-            self.config.input_label_style,
-        ));
+        let label_style = theme.secondary_style();
+        let label_line = Line::from(Span::styled(format!("{}:", input.label), label_style));
         let label_area = Rect::new(area.x, area.y, area.width, 1);
         frame.render_widget(Paragraph::new(label_line), label_area);
 
         // Draw input box on second line
         if area.height >= 2 {
             let input_area = Rect::new(area.x, area.y + 1, area.width, 1);
+            // For input fields, use foreground colors with a subtle background for distinction
             let style = if is_focused {
-                self.config.input_focused_style
+                // Focused: accent foreground with dark background
+                Style::default().fg(theme.accent).bg(theme.background)
             } else {
-                self.config.input_unfocused_style
+                // Unfocused: muted foreground with dark background
+                Style::default()
+                    .fg(theme.muted_foreground)
+                    .bg(theme.background)
             };
 
             // Show placeholder if empty and not focused
@@ -705,16 +709,19 @@ impl Modal {
     }
 
     /// Draw the message and inline input field on the same line.
-    fn draw_inline_input(&self, frame: &mut Frame, area: Rect) {
+    fn draw_inline_input(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let Some(ref input) = self.input else {
             return;
         };
 
         let is_focused = self.focus == ModalFocus::Input;
+        // For inline input, use a subtle background to make it stand out
         let input_style = if is_focused {
-            self.config.input_focused_style
+            // Focused: accent foreground on secondary background
+            Style::default().fg(theme.accent).bg(theme.secondary)
         } else {
-            self.config.input_unfocused_style
+            // Unfocused: muted foreground on muted background
+            Style::default().fg(theme.muted_foreground).bg(theme.muted)
         };
 
         // Calculate the message width
@@ -724,7 +731,8 @@ impl Modal {
         let input_width = area.width.saturating_sub(input_start).max(10);
 
         // Build the line with message + input
-        let mut spans = vec![Span::styled(&self.message, self.config.content_style)];
+        let content_style = theme.fg_style();
+        let mut spans = vec![Span::styled(&self.message, content_style)];
         spans.push(Span::raw(" "));
 
         // Show placeholder if empty and not focused
@@ -766,7 +774,7 @@ impl Modal {
     }
 
     /// Draw the buttons at the bottom of the modal.
-    fn draw_buttons(&self, frame: &mut Frame, area: Rect) {
+    fn draw_buttons(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         if self.buttons.is_empty() {
             return;
         }
@@ -790,9 +798,9 @@ impl Modal {
         for (i, button) in self.buttons.iter().enumerate() {
             let is_focused = buttons_focused && i == self.focused_button;
             let style = if is_focused {
-                self.config.focused_button_style
+                theme.highlight_style()
             } else {
-                self.config.unfocused_button_style
+                theme.fg_style()
             };
 
             let label = format!(" {} ", button.label);
@@ -816,10 +824,12 @@ impl Modal {
 }
 
 impl Component for Modal {
-    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
+    fn draw(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
         if !self.open {
             return;
         }
+
+        let theme = ctx.theme();
 
         // 1. Draw backdrop (full screen dark overlay)
         let backdrop = Block::default().style(self.config.backdrop_style);
@@ -831,15 +841,16 @@ impl Component for Modal {
         // 3. Clear the modal area and draw the modal box
         frame.render_widget(Clear, modal_rect);
 
+        // Use theme accent color for border
+        let border_style = theme.border_focused_style();
         let mut block = Block::default()
             .borders(Borders::ALL)
-            .border_style(self.config.border_style);
+            .border_style(border_style);
 
         if let Some(ref title) = self.title {
-            block = block.title(Span::styled(
-                format!(" {} ", title),
-                self.config.title_style,
-            ));
+            // Use theme accent foreground color for title (no background)
+            let title_style = Style::default().fg(theme.accent);
+            block = block.title(Span::styled(format!(" {} ", title), title_style));
         }
 
         let inner = block.inner(modal_rect);
@@ -849,36 +860,48 @@ impl Component for Modal {
         // Calculate space needed:
         // - Input field: 3 lines (label + input + spacing) if present
         // - Buttons: 2 lines (spacing + buttons)
-        let input_height: u16 = if self.input.is_some() { 3 } else { 0 };
+        let is_inline = self.input.as_ref().map(|i| i.inline).unwrap_or(false);
+        let input_height: u16 = if self.input.is_some() && !is_inline {
+            3
+        } else {
+            0
+        };
         let button_lines: u16 = 2;
         let message_height = inner.height.saturating_sub(input_height + button_lines);
 
         let mut current_y = inner.y;
 
-        // 5. Render message
+        // 5. Render message (and inline input if applicable)
         if message_height > 0 {
             let message_area = Rect::new(inner.x, current_y, inner.width, message_height);
-            let message_lines: Vec<Line> = self
-                .message
-                .lines()
-                .map(|line| Line::from(Span::styled(line, self.config.content_style)))
-                .collect();
-            let paragraph = Paragraph::new(message_lines);
-            frame.render_widget(paragraph, message_area);
+
+            if is_inline {
+                // Render message and input on the same line
+                self.draw_inline_input(frame, message_area, theme);
+            } else {
+                let content_style = theme.fg_style();
+                let message_lines: Vec<Line> = self
+                    .message
+                    .lines()
+                    .map(|line| Line::from(Span::styled(line, content_style)))
+                    .collect();
+                let paragraph = Paragraph::new(message_lines);
+                frame.render_widget(paragraph, message_area);
+            }
             current_y += message_height;
         }
 
-        // 6. Render input field (if present)
-        if self.input.is_some() && input_height > 0 {
+        // 6. Render input field (if present and not inline)
+        if self.input.is_some() && input_height > 0 && !is_inline {
             let input_area = Rect::new(inner.x, current_y, inner.width, input_height);
-            self.draw_input(frame, input_area);
+            self.draw_input(frame, input_area, theme);
             current_y += input_height;
         }
 
         // 7. Render buttons
         if current_y < inner.y + inner.height {
             let button_area = Rect::new(inner.x, current_y, inner.width, 1);
-            self.draw_buttons(frame, button_area);
+            self.draw_buttons(frame, button_area, theme);
         }
     }
 
@@ -1282,7 +1305,7 @@ impl ModalManager {
     /// Draw the current modal (if any) on top of the given area.
     ///
     /// This is called by the App's draw method after drawing the main UI.
-    pub(crate) fn draw(&self, frame: &mut Frame, area: Rect) {
+    pub(crate) fn draw(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         if let Some(modal) = &self.current {
             // 1. Draw backdrop (full screen dark overlay)
             let backdrop = Block::default().style(modal.config.backdrop_style);
@@ -1294,15 +1317,16 @@ impl ModalManager {
             // 3. Clear the modal area and draw the modal box
             frame.render_widget(Clear, modal_rect);
 
+            // Use theme accent color for border (focused border since modal is always focused)
+            let border_style = theme.border_focused_style();
             let mut block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(modal.config.border_style);
+                .border_style(border_style);
 
             if let Some(ref title) = modal.title {
-                block = block.title(Span::styled(
-                    format!(" {} ", title),
-                    modal.config.title_style,
-                ));
+                // Use theme accent foreground color for title (no background)
+                let title_style = Style::default().fg(theme.accent);
+                block = block.title(Span::styled(format!(" {} ", title), title_style));
             }
 
             let inner = block.inner(modal_rect);
@@ -1326,12 +1350,13 @@ impl ModalManager {
 
                 if is_inline {
                     // Render message and input on the same line
-                    modal.draw_inline_input(frame, message_area);
+                    modal.draw_inline_input(frame, message_area, theme);
                 } else {
+                    let content_style = theme.fg_style();
                     let message_lines: Vec<Line> = modal
                         .message
                         .lines()
-                        .map(|line| Line::from(Span::styled(line, modal.config.content_style)))
+                        .map(|line| Line::from(Span::styled(line, content_style)))
                         .collect();
                     let paragraph = Paragraph::new(message_lines);
                     frame.render_widget(paragraph, message_area);
@@ -1342,14 +1367,14 @@ impl ModalManager {
             // 6. Render input field (if present and not inline)
             if modal.input.is_some() && input_height > 0 && !is_inline {
                 let input_area = Rect::new(inner.x, current_y, inner.width, input_height);
-                modal.draw_input(frame, input_area);
+                modal.draw_input(frame, input_area, theme);
                 current_y += input_height;
             }
 
             // 7. Render buttons
             if current_y < inner.y + inner.height {
                 let button_area = Rect::new(inner.x, current_y, inner.width, 1);
-                modal.draw_buttons(frame, button_area);
+                modal.draw_buttons(frame, button_area, theme);
             }
         }
     }

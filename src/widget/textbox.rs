@@ -109,6 +109,25 @@ impl TextBoxConfig {
         }
     }
 
+    /// Create a theme-aware configuration from a theme.
+    ///
+    /// Uses theme colors for borders and text, making the TextBox respond
+    /// to theme changes (e.g., dimming when modals are open).
+    /// Note: This does not apply background colors - only foreground and border colors.
+    pub fn from_theme(theme: &crate::theme::Theme) -> Self {
+        Self {
+            focused_style: theme.fg_style(), // Foreground only, no background
+            unfocused_style: Style::default().fg(theme.muted_foreground), // Foreground only
+            focused_border_style: theme.border_focused_style(),
+            unfocused_border_style: theme.border_style(),
+            placeholder_style: Style::default().fg(theme.muted_foreground), // Foreground only
+            cursor_style: Style::default()
+                .bg(theme.accent)
+                .fg(theme.accent_foreground),
+            ..Default::default()
+        }
+    }
+
     /// Set the password mask character.
     pub fn with_mask(mut self, mask: char) -> Self {
         self.password_mask = Some(mask);
@@ -129,6 +148,7 @@ impl TextBoxConfig {
 }
 
 /// A single-line text input widget.
+#[derive(Clone)]
 pub struct TextBox {
     /// Unique identifier for focus tracking.
     id: String,

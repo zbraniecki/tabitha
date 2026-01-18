@@ -8,7 +8,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Tabs as RatatuiTabs},
+    widgets::Tabs as RatatuiTabs,
     Frame,
 };
 
@@ -317,7 +317,6 @@ impl TabManager {
             .collect();
 
         let tabs_widget = RatatuiTabs::new(titles)
-            .block(Block::default().borders(Borders::BOTTOM))
             .select(self.active_index)
             .highlight_style(Style::default().fg(Color::Yellow));
 

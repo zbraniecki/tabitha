@@ -14,15 +14,15 @@
 
 use std::time::Duration;
 
-use tabitha::{
-    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, MainUi, Task,
-    TaskContext, TaskSender,
-};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
     Frame,
+};
+use tabitha::{
+    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, MainUi, Task,
+    TaskContext, TaskSender,
 };
 
 // =============================================================================
@@ -103,46 +103,52 @@ impl CounterApp {
 
 impl Component for CounterApp {
     fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
-        // Create layout with header, main content, and footer
-        let chunks = Layout::default()
+        // Split area: main content area at top, footer at bottom
+        let outer_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(5),    // Content
+                Constraint::Min(8),    // Main area (header + content)
                 Constraint::Length(3), // Footer
             ])
             .split(area);
 
+        // Draw border around main area
+        let main_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let main_inner = main_block.inner(outer_chunks[0]);
+        frame.render_widget(main_block, outer_chunks[0]);
+
+        // Split main area: header at top, content below
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Header
+                Constraint::Min(5),    // Content
+            ])
+            .split(main_inner);
+
         // Header
-        let header = Paragraph::new("Counter Example")
-            .style(Style::default().fg(Color::Cyan))
-            .block(Block::default().borders(Borders::ALL));
-        frame.render_widget(header, chunks[0]);
+        let header = Paragraph::new("Counter Example").style(Style::default().fg(Color::Cyan));
+        frame.render_widget(header, main_chunks[0]);
 
         // Main content - counter display
         let counter_text = format!(
-            "Counter: {}\n\nTicks from task: {}\nAuto-increment: {}\nMouse capture: {}",
+            "\nCounter: {}\n\nTicks from task: {}\nAuto-increment: {}\nMouse capture: {}",
             self.counter,
             self.ticks,
             if self.auto_increment { "ON" } else { "OFF" },
             if self.mouse_enabled { "ON" } else { "OFF" }
         );
-        let content = Paragraph::new(counter_text)
-            .style(Style::default().fg(Color::White))
-            .block(
-                Block::default()
-                    .title("Status")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow)),
-            );
-        frame.render_widget(content, chunks[1]);
+        let content = Paragraph::new(counter_text).style(Style::default().fg(Color::White));
+        frame.render_widget(content, main_chunks[1]);
 
         // Footer with controls
         let footer_text = "↑/↓: Inc/Dec | Space: Toggle auto | m: Toggle mouse | q: Quit";
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(Color::DarkGray))
             .block(Block::default().borders(Borders::ALL));
-        frame.render_widget(footer, chunks[2]);
+        frame.render_widget(footer, outer_chunks[1]);
     }
 
     fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
@@ -220,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the application
     let app = AppBuilder::new()
         .main_ui(CounterApp::new())
-        //.add_task("ticker", TickerTask::new(Duration::from_secs(1)))
+        .add_task("ticker", TickerTask::new(Duration::from_secs(1)))
         .mouse_capture(true) // Enable mouse capture (default)
         .build()?;
 

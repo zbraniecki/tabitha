@@ -13,15 +13,15 @@
 //! - d: Toggle disable on the Settings tab
 //! - q/Ctrl+C: Quit
 
-use tabitha::{
-    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, KeyModifiers,
-    MainUi, Tab,
-};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
     Frame,
+};
+use tabitha::{
+    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, KeyModifiers,
+    MainUi, Tab,
 };
 
 // =============================================================================
@@ -48,13 +48,7 @@ impl Tab for HomeTab {
              Press 1, 2, or 3 to jump to specific tabs.\n\
              Press 'd' to toggle the Settings tab enabled/disabled.",
         )
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Home")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
-        );
+        .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
     }
 }
@@ -86,13 +80,7 @@ impl Tab for DashboardTab {
              This counter increments each time you switch to this tab.",
             self.view_count
         ))
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Dashboard")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green)),
-        );
+        .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
     }
 
@@ -126,13 +114,7 @@ impl Tab for SettingsTab {
              Press 'd' to toggle this tab's enabled state.\n\n\
              When disabled, you cannot navigate to this tab.",
         )
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Settings")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow)),
-        );
+        .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
     }
 }
@@ -157,21 +139,35 @@ impl TabsApp {
 
 impl Component for TabsApp {
     fn draw(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
-        // Split area: tab bar at top, content in middle, footer at bottom
+        // Split area: tabbar, content, footer
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // Tab bar
-                Constraint::Min(5),    // Tab content
+                Constraint::Length(3), // Tab bar with border
+                Constraint::Min(5),    // Tab content with border
                 Constraint::Length(3), // Footer
             ])
             .split(area);
 
+        // Draw border around tabbar
+        let tabbar_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let tabbar_inner = tabbar_block.inner(chunks[0]);
+        frame.render_widget(tabbar_block, chunks[0]);
+
         // Draw tab bar
-        ctx.tabs().draw_tabbar(frame, chunks[0]);
+        ctx.tabs().draw_tabbar(frame, tabbar_inner);
+
+        // Draw border around content area
+        let content_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let content_inner = content_block.inner(chunks[1]);
+        frame.render_widget(content_block, chunks[1]);
 
         // Draw active tab content
-        ctx.tabs().draw_content(frame, chunks[1]);
+        ctx.tabs().draw_content(frame, content_inner);
 
         // Footer with controls
         let settings_status = if self.settings_enabled {

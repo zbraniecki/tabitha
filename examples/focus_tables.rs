@@ -13,15 +13,15 @@
 //! - Up/Down: Navigate rows in the focused table
 //! - q/Ctrl+C: Quit
 
-use tabitha::{
-    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, MainUi, Tab,
-    TabEventContext,
-};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Paragraph, Row, Table},
     Frame,
+};
+use tabitha::{
+    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, MainUi, Tab,
+    TabEventContext,
 };
 
 // =============================================================================
@@ -51,13 +51,7 @@ impl Tab for WelcomeTab {
              • The focused table shows selected row in yellow\n\
              • The unfocused table shows selected row in gray",
         )
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Welcome")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
-        );
+        .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
     }
 }
@@ -296,21 +290,35 @@ impl FocusTablesApp {
 
 impl Component for FocusTablesApp {
     fn draw(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
-        // Split area: tab bar at top, content in middle, footer at bottom
+        // Split area: tabbar, content, footer
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // Tab bar
-                Constraint::Min(5),    // Tab content
+                Constraint::Length(3), // Tab bar with border
+                Constraint::Min(5),    // Tab content with border
                 Constraint::Length(3), // Footer
             ])
             .split(area);
 
+        // Draw border around tabbar
+        let tabbar_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let tabbar_inner = tabbar_block.inner(chunks[0]);
+        frame.render_widget(tabbar_block, chunks[0]);
+
         // Draw tab bar
-        ctx.tabs().draw_tabbar(frame, chunks[0]);
+        ctx.tabs().draw_tabbar(frame, tabbar_inner);
+
+        // Draw border around content area
+        let content_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let content_inner = content_block.inner(chunks[1]);
+        frame.render_widget(content_block, chunks[1]);
 
         // Draw active tab content
-        ctx.tabs().draw_content(frame, chunks[1]);
+        ctx.tabs().draw_content(frame, content_inner);
 
         // Footer with controls
         let tabs_ctx = ctx.tabs();

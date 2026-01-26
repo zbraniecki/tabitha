@@ -22,73 +22,29 @@ use crate::theme::Theme;
 use crate::widget::ModalManager;
 
 /// Error type for application operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AppError {
     /// Terminal error.
-    Terminal(TerminalError),
+    #[error("Terminal error: {0}")]
+    Terminal(#[from] TerminalError),
     /// Build error.
-    Build(BuildError),
+    #[error("Build error: {0}")]
+    Build(#[from] BuildError),
     /// IO error.
-    Io(std::io::Error),
-}
-
-impl std::fmt::Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AppError::Terminal(e) => write!(f, "Terminal error: {}", e),
-            AppError::Build(e) => write!(f, "Build error: {}", e),
-            AppError::Io(e) => write!(f, "IO error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for AppError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            AppError::Terminal(e) => Some(e),
-            AppError::Build(e) => Some(e),
-            AppError::Io(e) => Some(e),
-        }
-    }
-}
-
-impl From<TerminalError> for AppError {
-    fn from(err: TerminalError) -> Self {
-        AppError::Terminal(err)
-    }
-}
-
-impl From<BuildError> for AppError {
-    fn from(err: BuildError) -> Self {
-        AppError::Build(err)
-    }
-}
-
-impl From<std::io::Error> for AppError {
-    fn from(err: std::io::Error) -> Self {
-        AppError::Io(err)
-    }
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Error type for building an application.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum BuildError {
     /// No main UI was provided.
+    #[error("No main UI provided")]
     NoMainUi,
     /// A task with the same name was already added.
+    #[error("Duplicate task: {0}")]
     DuplicateTask(&'static str),
 }
-
-impl std::fmt::Display for BuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BuildError::NoMainUi => write!(f, "No main UI provided"),
-            BuildError::DuplicateTask(name) => write!(f, "Duplicate task: {}", name),
-        }
-    }
-}
-
-impl std::error::Error for BuildError {}
 
 /// A pending task to be spawned when the app runs.
 struct PendingTask {
@@ -322,10 +278,12 @@ impl<M: MainUi + 'static> App<M> {
         // Signal all tasks to stop
         let _ = cancel_tx.send(true);
 
-        // Wait for tasks to finish (with timeout)
-        let shutdown_timeout = Duration::from_secs(2);
+        // Wait for tasks to finish (with shared timeout deadline to avoid accumulation)
+        let shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         for handle in task_handles {
-            let _ = tokio::time::timeout(shutdown_timeout, handle.join()).await;
+            let remaining =
+                shutdown_deadline.saturating_duration_since(tokio::time::Instant::now());
+            let _ = tokio::time::timeout(remaining, handle.join()).await;
         }
 
         // Restore terminal

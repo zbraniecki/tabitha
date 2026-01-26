@@ -13,32 +13,11 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal as RatatuiTerminal};
 
 /// Error type for terminal operations
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TerminalError {
     /// IO error from crossterm or ratatui
-    Io(io::Error),
-}
-
-impl std::fmt::Display for TerminalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TerminalError::Io(e) => write!(f, "Terminal IO error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for TerminalError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            TerminalError::Io(e) => Some(e),
-        }
-    }
-}
-
-impl From<io::Error> for TerminalError {
-    fn from(err: io::Error) -> Self {
-        TerminalError::Io(err)
-    }
+    #[error("Terminal IO error: {0}")]
+    Io(#[from] io::Error),
 }
 
 /// Configuration for terminal initialization.

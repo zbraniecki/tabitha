@@ -56,7 +56,7 @@ pub use datatable::{
     SelectionMode, SimpleRow, SortDirection, SortState, TableRow,
 };
 pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult};
-pub use textbox::{TextBox, TextBoxConfig, TextBoxEvent};
+pub use textbox::{TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};
 
 use ratatui::{layout::Rect, Frame};
 

@@ -1254,6 +1254,7 @@ dependencies = [
  "futures",
  "ratatui",
  "smallvec",
+ "thiserror 2.0.17",
  "tokio",
 ]
 

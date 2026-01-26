@@ -1056,11 +1056,10 @@ impl<R: TableRow + 'static> Control for DataTable<R> {
 
                 // Determine row base style
                 let row_base_style = row_data.row_style().unwrap_or_else(|| {
-                    if self.config.alt_row_style.is_some() && display_idx % 2 == 1 {
-                        self.config.alt_row_style.unwrap()
-                    } else {
-                        self.config.row_style
-                    }
+                    self.config
+                        .alt_row_style
+                        .filter(|_| display_idx % 2 == 1)
+                        .unwrap_or(self.config.row_style)
                 });
 
                 // Apply selection highlight

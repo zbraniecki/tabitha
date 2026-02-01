@@ -6,9 +6,31 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use thiserror::Error;
 use tokio::task::JoinHandle;
 
 use crate::bus::TaskSender;
+
+/// Error returned when a blocking task fails.
+#[derive(Debug, Error)]
+pub enum BlockingTaskError {
+    /// The blocking task panicked.
+    #[error("blocking task panicked")]
+    Panicked,
+    /// The blocking task was aborted.
+    #[error("blocking task was aborted")]
+    Aborted,
+}
+
+impl From<tokio::task::JoinError> for BlockingTaskError {
+    fn from(err: tokio::task::JoinError) -> Self {
+        if err.is_panic() {
+            BlockingTaskError::Panicked
+        } else {
+            BlockingTaskError::Aborted
+        }
+    }
+}
 
 /// Context provided to running tasks.
 ///
@@ -162,23 +184,30 @@ impl TaskHandle {
 ///
 /// This function is only available with the `blocking-tasks` feature.
 #[cfg(feature = "blocking-tasks")]
-pub async fn spawn_blocking<F, T>(f: F) -> Result<T, tokio::task::JoinError>
+pub async fn spawn_blocking<F, T>(f: F) -> Result<T, BlockingTaskError>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(f).await
+    tracing::trace!("spawning blocking task");
+    tokio::task::spawn_blocking(f).await.map_err(BlockingTaskError::from)
 }
 
-/// Spawn a blocking operation, panicking if it fails.
+/// Spawn a blocking operation, returning the error if it fails.
 ///
-/// This is a convenience wrapper around [`spawn_blocking`] that panics
-/// on failure instead of returning a Result.
+/// This is a convenience wrapper around [`spawn_blocking`] that returns
+/// the blocking task's result or a [`BlockingTaskError`] if the task
+/// panicked or was aborted.
+///
+/// # Errors
+///
+/// Returns [`BlockingTaskError::Panicked`] if the blocking task panicked,
+/// or [`BlockingTaskError::Aborted`] if it was aborted.
 #[cfg(feature = "blocking-tasks")]
-pub async fn spawn_blocking_unwrap<F, T>(f: F) -> T
+pub async fn spawn_blocking_or_err<F, T>(f: F) -> Result<T, BlockingTaskError>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    spawn_blocking(f).await.expect("blocking task panicked")
+    spawn_blocking(f).await
 }

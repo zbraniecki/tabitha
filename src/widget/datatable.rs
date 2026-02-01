@@ -1055,13 +1055,17 @@ impl<R: TableRow + 'static> Control for DataTable<R> {
                 let is_selected = self.selected_row == Some(display_idx);
 
                 // Determine row base style
-                let row_base_style = row_data.row_style().unwrap_or_else(|| {
-                    if self.config.alt_row_style.is_some() && display_idx % 2 == 1 {
-                        self.config.alt_row_style.unwrap()
+                let row_base_style = if let Some(style) = row_data.row_style() {
+                    style
+                } else if let Some(style) = self.config.alt_row_style {
+                    if display_idx % 2 == 1 {
+                        style
                     } else {
                         self.config.row_style
                     }
-                });
+                } else {
+                    self.config.row_style
+                };
 
                 // Apply selection highlight
                 let row_style = if is_selected

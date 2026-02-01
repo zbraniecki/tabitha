@@ -122,7 +122,7 @@ pub use theme::Theme;
 
 // Conditionally re-export blocking task helpers
 #[cfg(feature = "blocking-tasks")]
-pub use task::{spawn_blocking, spawn_blocking_unwrap};
+pub use task::{spawn_blocking, spawn_blocking_or_err, BlockingTaskError};
 
 // Re-export widget types
 pub use widget::{

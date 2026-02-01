@@ -6,6 +6,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 
+use thiserror::Error;
 use tokio::sync::mpsc;
 
 /// Default channel buffer size for task messages.
@@ -46,16 +47,23 @@ impl TaskMessage {
 }
 
 /// Error returned when sending a message fails.
-#[derive(Debug)]
-pub struct SendError<T>(pub T);
-
-impl<T> std::fmt::Display for SendError<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "channel closed")
-    }
+#[derive(Debug, Error)]
+pub enum SendError<T> {
+    /// The channel is closed.
+    #[error("channel closed")]
+    Closed(T),
 }
 
-impl<T: std::fmt::Debug> std::error::Error for SendError<T> {}
+/// Error returned when try_send fails.
+#[derive(Debug, Error)]
+pub enum TrySendError<T> {
+    /// The channel is full.
+    #[error("channel full")]
+    Full(T),
+    /// The channel is closed.
+    #[error("channel closed")]
+    Closed(T),
+}
 
 /// Message bus for typed inter-task communication.
 ///
@@ -180,11 +188,9 @@ impl<T: Any + Send + 'static> TaskSender<T> {
         let task_message = TaskMessage::new(self.task_name, message);
         self.unified_tx.send(task_message).await.map_err(|e| {
             // Extract the original message from TaskMessage
-            let payload = e.0.payload;
-            let msg = payload
-                .downcast::<T>()
-                .expect("type mismatch in TaskSender");
-            SendError(*msg)
+            // The downcast is guaranteed to succeed because we just boxed a value of type T
+            let msg = *e.0.payload.downcast::<T>().expect("type consistency in TaskSender");
+            SendError::Closed(msg)
         })
     }
 
@@ -192,13 +198,13 @@ impl<T: Any + Send + 'static> TaskSender<T> {
     pub fn try_send(&self, message: T) -> Result<(), TrySendError<T>> {
         let task_message = TaskMessage::new(self.task_name, message);
         self.unified_tx.try_send(task_message).map_err(|e| match e {
-            mpsc::error::TrySendError::Full(tm) => {
-                let msg = tm.payload.downcast::<T>().expect("type mismatch");
-                TrySendError::Full(*msg)
+            mpsc::error::TrySendError::Full(task_msg) => {
+                let msg = *task_msg.payload.downcast::<T>().expect("type consistency in TaskSender");
+                TrySendError::Full(msg)
             }
-            mpsc::error::TrySendError::Closed(tm) => {
-                let msg = tm.payload.downcast::<T>().expect("type mismatch");
-                TrySendError::Closed(*msg)
+            mpsc::error::TrySendError::Closed(task_msg) => {
+                let msg = *task_msg.payload.downcast::<T>().expect("type consistency in TaskSender");
+                TrySendError::Closed(msg)
             }
         })
     }
@@ -209,22 +215,24 @@ impl<T: Any + Send + 'static> TaskSender<T> {
     }
 }
 
-/// Error returned when try_send fails.
-#[derive(Debug)]
-pub enum TrySendError<T> {
-    /// The channel is full.
-    Full(T),
-    /// The channel is closed.
-    Closed(T),
+/// Trait for types that can extract the message value from a send error.
+pub trait SendErrorExt<T> {
+    /// Extract the message that failed to send.
+    fn into_message(self) -> T;
 }
 
-impl<T> std::fmt::Display for TrySendError<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> SendErrorExt<T> for SendError<T> {
+    fn into_message(self) -> T {
         match self {
-            TrySendError::Full(_) => write!(f, "channel full"),
-            TrySendError::Closed(_) => write!(f, "channel closed"),
+            SendError::Closed(msg) => msg,
         }
     }
 }
 
-impl<T: std::fmt::Debug> std::error::Error for TrySendError<T> {}
+impl<T> SendErrorExt<T> for TrySendError<T> {
+    fn into_message(self) -> T {
+        match self {
+            TrySendError::Full(msg) | TrySendError::Closed(msg) => msg,
+        }
+    }
+}

@@ -28,6 +28,8 @@ pub enum AppError {
     Terminal(TerminalError),
     /// Build error.
     Build(BuildError),
+    /// Runtime error.
+    Runtime(RuntimeError),
     /// IO error.
     Io(std::io::Error),
 }
@@ -37,6 +39,7 @@ impl std::fmt::Display for AppError {
         match self {
             AppError::Terminal(e) => write!(f, "Terminal error: {}", e),
             AppError::Build(e) => write!(f, "Build error: {}", e),
+            AppError::Runtime(e) => write!(f, "Runtime error: {}", e),
             AppError::Io(e) => write!(f, "IO error: {}", e),
         }
     }
@@ -47,6 +50,7 @@ impl std::error::Error for AppError {
         match self {
             AppError::Terminal(e) => Some(e),
             AppError::Build(e) => Some(e),
+            AppError::Runtime(e) => Some(e),
             AppError::Io(e) => Some(e),
         }
     }
@@ -61,6 +65,12 @@ impl From<TerminalError> for AppError {
 impl From<BuildError> for AppError {
     fn from(err: BuildError) -> Self {
         AppError::Build(err)
+    }
+}
+
+impl From<RuntimeError> for AppError {
+    fn from(err: RuntimeError) -> Self {
+        AppError::Runtime(err)
     }
 }
 
@@ -89,6 +99,26 @@ impl std::fmt::Display for BuildError {
 }
 
 impl std::error::Error for BuildError {}
+
+/// Error type for runtime application errors.
+#[derive(Debug)]
+pub enum RuntimeError {
+    /// The message bus receiver was already taken.
+    ReceiverAlreadyTaken,
+    /// A background task failed to spawn.
+    TaskSpawnFailed(&'static str, std::io::Error),
+}
+
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeError::ReceiverAlreadyTaken => write!(f, "message bus receiver already taken"),
+            RuntimeError::TaskSpawnFailed(name, e) => write!(f, "failed to spawn task '{}': {}", name, e),
+        }
+    }
+}
+
+impl std::error::Error for RuntimeError {}
 
 /// A pending task to be spawned when the app runs.
 struct PendingTask {
@@ -295,41 +325,54 @@ impl<M: MainUi + 'static> App<M> {
     /// This sets up the terminal, spawns background tasks, and runs
     /// the main event loop until the application quits.
     pub async fn run(mut self) -> Result<(), AppError> {
+        let _span = tracing::trace_span!("app_run").entered();
+
         // Install panic hook for terminal restoration
         install_panic_hook();
 
         // Set up terminal with configuration
         let mut terminal = Terminal::with_config(self.terminal_config.clone())?;
+        tracing::trace!("terminal initialized");
 
         // Set up cancellation for tasks
         let (cancel_tx, cancel_rx) = watch::channel(false);
 
         // Take the unified message receiver
-        let mut message_rx = self.bus.take_receiver().expect("receiver already taken");
+        let mut message_rx = self.bus.take_receiver()
+            .ok_or(RuntimeError::ReceiverAlreadyTaken)?;
 
         // Spawn all tasks
         let mut task_handles: Vec<TaskHandle> = Vec::with_capacity(self.tasks.len());
         for pending in self.tasks.drain(..) {
+            tracing::trace!(task_name = pending.name, "spawning task");
             let ctx = TaskContext::new(cancel_rx.clone());
             let future = (pending.factory)(ctx);
             let handle = tokio::spawn(future);
             task_handles.push(TaskHandle::new(pending.name, handle));
         }
+        tracing::trace!(task_count = task_handles.len(), "all tasks spawned");
 
         // Run the event loop
         let result = self.run_event_loop(&mut terminal, &mut message_rx).await;
 
         // Signal all tasks to stop
+        tracing::trace!("sending cancellation signal");
         let _ = cancel_tx.send(true);
 
         // Wait for tasks to finish (with timeout)
         let shutdown_timeout = Duration::from_secs(2);
         for handle in task_handles {
-            let _ = tokio::time::timeout(shutdown_timeout, handle.join()).await;
+            let task_name = handle.name;
+            match tokio::time::timeout(shutdown_timeout, handle.join()).await {
+                Ok(Ok(())) => tracing::trace!(task_name, "task completed"),
+                Ok(Err(_)) => tracing::warn!(task_name, "task panicked"),
+                Err(_) => tracing::debug!(task_name, "task shutdown timeout"),
+            }
         }
 
         // Restore terminal
         terminal.restore()?;
+        tracing::trace!("terminal restored");
 
         result
     }
@@ -443,6 +486,7 @@ impl<M: MainUi + 'static> App<M> {
                             None => {
                                 // All senders dropped - if no tasks, this is expected
                                 // Keep running as long as there are terminal events
+                                tracing::trace!("all task senders dropped");
                                 (false, None)
                             }
                         }

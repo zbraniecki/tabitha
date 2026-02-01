@@ -164,7 +164,9 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         // Best effort to restore terminal state
-        let _ = self.restore();
+        if let Err(e) = self.restore() {
+            tracing::warn!(error = %e, "failed to restore terminal on drop");
+        }
     }
 }
 
@@ -175,6 +177,7 @@ impl Drop for Terminal {
 pub fn install_panic_hook() {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
+        tracing::trace!("panic hook restoring terminal");
         // Best effort to restore terminal
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);

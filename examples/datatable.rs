@@ -18,6 +18,11 @@
 //! - Tab: Switch between tables
 //! - q/Ctrl+C: Quit
 
+#[path = "_common/mod.rs"]
+mod common;
+use clap::Parser;
+use common::Args;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -421,9 +426,14 @@ impl MainUi for DataTableApp {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    let log_rx = args.init_tracing();
+
     let app = AppBuilder::new()
         .main_ui(DataTableApp::new())
         .mouse_capture(false)
+        .enable_dev_console(args.dev)
+        .with_log_receiver(log_rx)
         .build()?;
 
     app.run().await?;

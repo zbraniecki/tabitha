@@ -189,7 +189,10 @@ impl<T: Any + Send + 'static> TaskSender<T> {
         self.unified_tx.send(task_message).await.map_err(|e| {
             // Extract the original message from TaskMessage
             // The downcast is guaranteed to succeed because we just boxed a value of type T
-            let msg = *e.0.payload.downcast::<T>().expect("type consistency in TaskSender");
+            let msg =
+                *e.0.payload
+                    .downcast::<T>()
+                    .expect("type consistency in TaskSender");
             SendError::Closed(msg)
         })
     }
@@ -199,11 +202,17 @@ impl<T: Any + Send + 'static> TaskSender<T> {
         let task_message = TaskMessage::new(self.task_name, message);
         self.unified_tx.try_send(task_message).map_err(|e| match e {
             mpsc::error::TrySendError::Full(task_msg) => {
-                let msg = *task_msg.payload.downcast::<T>().expect("type consistency in TaskSender");
+                let msg = *task_msg
+                    .payload
+                    .downcast::<T>()
+                    .expect("type consistency in TaskSender");
                 TrySendError::Full(msg)
             }
             mpsc::error::TrySendError::Closed(task_msg) => {
-                let msg = *task_msg.payload.downcast::<T>().expect("type consistency in TaskSender");
+                let msg = *task_msg
+                    .payload
+                    .downcast::<T>()
+                    .expect("type consistency in TaskSender");
                 TrySendError::Closed(msg)
             }
         })

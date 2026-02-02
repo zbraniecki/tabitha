@@ -97,6 +97,7 @@ pub mod app;
 pub mod bus;
 pub mod component;
 pub mod context;
+pub mod dev_console_layer;
 pub mod event;
 pub mod focus;
 pub mod tabs;
@@ -113,6 +114,7 @@ pub use context::{
     AppContext, DrawContext, FocusDrawContext, FocusEventContext, ModalEventContext,
     TabEventContext, TabsDrawContext, TabsEventContext,
 };
+pub use dev_console_layer::DevConsoleLayer;
 pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 pub use focus::{EventResult, FocusManager};
 pub use tabs::{BoxedTab, Tab, TabInfo, TabManager};
@@ -127,9 +129,9 @@ pub use task::{spawn_blocking, spawn_blocking_or_err, BlockingTaskError};
 // Re-export widget types
 pub use widget::{
     BoxedControl, Column, ColumnAlign, ColumnType, ColumnWidth, Control, ControlEvent, ControlExt,
-    CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, Modal, ModalButton, ModalConfig,
-    ModalInput, ModalManager, ModalResult, SelectionMode, SimpleRow, SortDirection, SortState,
-    TableRow, TextBox, TextBoxConfig, TextBoxEvent,
+    CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, DevConsole, LogLine, Modal,
+    ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult, SelectionMode, SimpleRow,
+    SortDirection, SortState, TableRow, TextBox, TextBoxConfig, TextBoxEvent,
 };
 
 // Re-export ratatui types that users commonly need

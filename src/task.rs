@@ -190,7 +190,9 @@ where
     T: Send + 'static,
 {
     tracing::trace!("spawning blocking task");
-    tokio::task::spawn_blocking(f).await.map_err(BlockingTaskError::from)
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(BlockingTaskError::from)
 }
 
 /// Spawn a blocking operation, returning the error if it fails.

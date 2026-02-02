@@ -13,13 +13,13 @@ use tokio::sync::watch;
 use crate::bus::{MessageBus, TaskMessage, TaskSender};
 use crate::component::MainUi;
 use crate::context::{AppContext, DrawContext, TabEventContext};
-use crate::event::Event;
+use crate::event::{Event, KeyCode};
 use crate::focus::FocusManager;
 use crate::tabs::{Tab, TabManager};
 use crate::task::{BoxedTaskFuture, Task, TaskContext, TaskFactory, TaskHandle};
 use crate::terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
 use crate::theme::Theme;
-use crate::widget::ModalManager;
+use crate::widget::{DevConsole, ModalManager};
 
 /// Error type for application operations.
 #[derive(Debug)]
@@ -113,7 +113,9 @@ impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RuntimeError::ReceiverAlreadyTaken => write!(f, "message bus receiver already taken"),
-            RuntimeError::TaskSpawnFailed(name, e) => write!(f, "failed to spawn task '{}': {}", name, e),
+            RuntimeError::TaskSpawnFailed(name, e) => {
+                write!(f, "failed to spawn task '{}': {}", name, e)
+            }
         }
     }
 }
@@ -155,6 +157,8 @@ pub struct AppBuilder<M: MainUi> {
     theme: Theme,
     tick_rate: Option<Duration>,
     mouse_capture: bool,
+    dev_console_enabled: bool,
+    log_rx: Option<mpsc::UnboundedReceiver<crate::widget::LogLine>>,
 }
 
 impl<M: MainUi + 'static> AppBuilder<M> {
@@ -170,7 +174,38 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             theme: Theme::default(),
             tick_rate: None,
             mouse_capture: true,
+            dev_console_enabled: false,
+            log_rx: None,
         }
+    }
+
+    /// Enable the developer console.
+    ///
+    /// When enabled, press `~` (backtick) to toggle the developer console
+    /// overlay which displays log messages and debug information.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let app = AppBuilder::new()
+    ///     .main_ui(MyApp::new())
+    ///     .enable_dev_console(true)
+    ///     .build()?;
+    /// ```
+    pub fn enable_dev_console(mut self, enabled: bool) -> Self {
+        self.dev_console_enabled = enabled;
+        self
+    }
+
+    /// Set the log receiver for the developer console.
+    ///
+    /// This is typically set by `TabithaArgs::init_tracing()` when `--dev` is used.
+    pub fn with_log_receiver(
+        mut self,
+        rx: Option<mpsc::UnboundedReceiver<crate::widget::LogLine>>,
+    ) -> Self {
+        self.log_rx = rx;
+        self
     }
 
     /// Set the main UI component.
@@ -265,6 +300,15 @@ impl<M: MainUi + 'static> AppBuilder<M> {
     pub fn build(self) -> Result<App<M>, BuildError> {
         let main_ui = self.main_ui.ok_or(BuildError::NoMainUi)?;
 
+        let dev_console = if self.dev_console_enabled {
+            DevConsole::new()
+        } else {
+            // Create a hidden console that won't be rendered
+            let mut console = DevConsole::new();
+            console.hide();
+            console
+        };
+
         Ok(App {
             main_ui,
             tasks: self.tasks,
@@ -277,6 +321,9 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             terminal_config: TerminalConfig {
                 mouse_capture: self.mouse_capture,
             },
+            dev_console,
+            dev_console_enabled: self.dev_console_enabled,
+            log_rx: self.log_rx,
         })
     }
 
@@ -317,6 +364,9 @@ pub struct App<M: MainUi> {
     theme: Theme,
     tick_rate: Option<Duration>,
     terminal_config: TerminalConfig,
+    dev_console: DevConsole,
+    dev_console_enabled: bool,
+    log_rx: Option<mpsc::UnboundedReceiver<crate::widget::LogLine>>,
 }
 
 impl<M: MainUi + 'static> App<M> {
@@ -338,7 +388,9 @@ impl<M: MainUi + 'static> App<M> {
         let (cancel_tx, cancel_rx) = watch::channel(false);
 
         // Take the unified message receiver
-        let mut message_rx = self.bus.take_receiver()
+        let mut message_rx = self
+            .bus
+            .take_receiver()
             .ok_or(RuntimeError::ReceiverAlreadyTaken)?;
 
         // Spawn all tasks
@@ -397,7 +449,9 @@ impl<M: MainUi + 'static> App<M> {
 
         loop {
             // Wait for an event
-            let (needs_redraw, event_to_dispatch) = if let Some(ref mut interval) = tick_interval {
+            let (mut needs_redraw, event_to_dispatch) = if let Some(ref mut interval) =
+                tick_interval
+            {
                 tokio::select! {
                     biased;
 
@@ -406,10 +460,14 @@ impl<M: MainUi + 'static> App<M> {
                         match event {
                             Some(Ok(crossterm_event)) => {
                                 let event = Event::from(crossterm_event);
+                                tracing::trace!(?event, "received terminal event");
                                 (true, Some(event))
                             }
                             Some(Err(e)) => return Err(AppError::Io(e)),
-                            None => break, // Stream ended
+                            None => {
+                                tracing::trace!("event stream ended");
+                                break;
+                            }
                         }
                     }
 
@@ -417,6 +475,7 @@ impl<M: MainUi + 'static> App<M> {
                     msg = message_rx.recv() => {
                         match msg {
                             Some(task_message) => {
+                                tracing::trace!(task_name = task_message.task_name, "received task message");
                                 let mut ctx = AppContext::new(
                                     terminal,
                                     &mut self.tab_manager,
@@ -431,12 +490,16 @@ impl<M: MainUi + 'static> App<M> {
                                 should_quit = ctx.should_quit();
                                 (redraw, None)
                             }
-                            None => break, // All senders dropped
+                            None => {
+                                tracing::trace!("all task senders dropped");
+                                break;
+                            }
                         }
                     }
 
                     // Tick timer
                     _ = interval.tick() => {
+                        tracing::trace!("tick");
                         let mut ctx = AppContext::new(
                             terminal,
                             &mut self.tab_manager,
@@ -458,10 +521,14 @@ impl<M: MainUi + 'static> App<M> {
                         match event {
                             Some(Ok(crossterm_event)) => {
                                 let event = Event::from(crossterm_event);
+                                tracing::trace!(?event, "received terminal event");
                                 (true, Some(event))
                             }
                             Some(Err(e)) => return Err(AppError::Io(e)),
-                            None => break, // Stream ended
+                            None => {
+                                tracing::trace!("event stream ended");
+                                break;
+                            }
                         }
                     }
 
@@ -469,6 +536,7 @@ impl<M: MainUi + 'static> App<M> {
                     msg = message_rx.recv() => {
                         match msg {
                             Some(task_message) => {
+                                tracing::trace!(task_name = task_message.task_name, "received task message");
                                 let mut ctx = AppContext::new(
                                     terminal,
                                     &mut self.tab_manager,
@@ -494,41 +562,57 @@ impl<M: MainUi + 'static> App<M> {
                 }
             };
 
+            // Poll log receiver and feed logs to dev console
+            if let Some(ref mut log_rx) = self.log_rx {
+                while let Ok(log_line) = log_rx.try_recv() {
+                    self.dev_console.push(log_line);
+                }
+            }
+
             // Dispatch event if we have one
             if let Some(event) = event_to_dispatch {
-                // Three-phase event dispatch:
-                //
-                // Phase 0: Modal handles the event first (if open)
-                // Modal events are handled by ModalManager before main UI
-                let modal_consumed = self.modal_manager.handle_event(&event);
+                // Check for dev console toggle first (` key) - only if dev console is enabled
+                if self.dev_console_enabled
+                    && matches!(&event, Event::Key(key) if key.code == KeyCode::Char('`'))
+                {
+                    self.dev_console.toggle();
+                    needs_redraw = true;
+                    // Skip normal event processing for the toggle key
+                } else {
+                    // Three-phase event dispatch:
+                    //
+                    // Phase 0: Modal handles the event first (if open)
+                    // Modal events are handled by ModalManager before main UI
+                    let modal_consumed = self.modal_manager.handle_event(&event);
 
-                // Phase 1: MainUi handles the event (can handle quit, tab switching, etc.)
-                // Also allows MainUi to check modal results
-                let main_result = {
-                    let mut ctx = AppContext::new(
-                        terminal,
-                        &mut self.tab_manager,
-                        &mut self.focus_manager,
-                        &mut self.modal_manager,
-                    );
-                    let result = if modal_consumed {
-                        // Modal consumed the event, but still call MainUi
-                        // so it can check for modal results
-                        self.main_ui.handle_event(&event, &mut ctx);
-                        crate::focus::EventResult::StopPropagation
-                    } else {
-                        self.main_ui.handle_event(&event, &mut ctx)
+                    // Phase 1: MainUi handles the event (can handle quit, tab switching, etc.)
+                    // Also allows MainUi to check modal results
+                    let main_result = {
+                        let mut ctx = AppContext::new(
+                            terminal,
+                            &mut self.tab_manager,
+                            &mut self.focus_manager,
+                            &mut self.modal_manager,
+                        );
+                        let result = if modal_consumed {
+                            // Modal consumed the event, but still call MainUi
+                            // so it can check for modal results
+                            self.main_ui.handle_event(&event, &mut ctx);
+                            crate::focus::EventResult::StopPropagation
+                        } else {
+                            self.main_ui.handle_event(&event, &mut ctx)
+                        };
+                        should_quit = ctx.should_quit();
+                        result
                     };
-                    should_quit = ctx.should_quit();
-                    result
-                };
 
-                // Phase 2: If MainUi didn't handle it, delegate to active tab
-                // Uses TabEventContext which doesn't include TabManager, avoiding borrow conflicts
-                if main_result.should_propagate() && !should_quit {
-                    let mut tab_ctx = TabEventContext::new(terminal, &mut self.focus_manager);
-                    self.tab_manager.handle_event(&event, &mut tab_ctx);
-                    should_quit = should_quit || tab_ctx.should_quit();
+                    // Phase 2: If MainUi didn't handle it, delegate to active tab
+                    // Uses TabEventContext which doesn't include TabManager, avoiding borrow conflicts
+                    if main_result.should_propagate() && !should_quit {
+                        let mut tab_ctx = TabEventContext::new(terminal, &mut self.focus_manager);
+                        self.tab_manager.handle_event(&event, &mut tab_ctx);
+                        should_quit = should_quit || tab_ctx.should_quit();
+                    }
                 }
             }
 
@@ -548,6 +632,8 @@ impl<M: MainUi + 'static> App<M> {
 
     /// Draw the UI.
     fn draw(&mut self, terminal: &mut Terminal) -> Result<(), AppError> {
+        tracing::trace!("drawing frame");
+
         // Use dimmed theme for main UI when modal is open
         let main_theme = if self.modal_manager.is_open() {
             self.theme.dimmed()
@@ -562,6 +648,8 @@ impl<M: MainUi + 'static> App<M> {
             self.main_ui.draw(frame, area, &draw_ctx);
             // Draw modal on top (if open) - modal uses full theme colors
             self.modal_manager.draw(frame, area, &self.theme);
+            // Draw developer console on top of everything (if visible)
+            self.dev_console.draw(frame, area, &self.theme);
         })?;
         Ok(())
     }

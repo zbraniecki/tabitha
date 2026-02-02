@@ -13,6 +13,11 @@
 //! - d: Toggle disable on the Settings tab
 //! - q/Ctrl+C: Quit
 
+#[path = "_common/mod.rs"]
+mod common;
+use clap::Parser;
+use common::Args;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -247,6 +252,9 @@ impl MainUi for TabsApp {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    let log_rx = args.init_tracing();
+
     // Build the application with tabs
     let app = AppBuilder::new()
         .main_ui(TabsApp::new())
@@ -254,6 +262,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_tab(DashboardTab::new())
         .add_tab(SettingsTab::new())
         .mouse_capture(false) // Disable mouse for this example
+        .enable_dev_console(args.dev)
+        .with_log_receiver(log_rx)
         .build()?;
 
     // Run the application

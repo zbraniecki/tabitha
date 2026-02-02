@@ -20,6 +20,11 @@
 //! - 5: Show prompt modal (with input field)
 //! - Ctrl+C/Ctrl+Q: Quit
 
+#[path = "_common/mod.rs"]
+mod common;
+use clap::Parser;
+use common::Args;
+
 use std::time::Duration;
 
 use ratatui::{
@@ -287,11 +292,16 @@ impl MainUi for ModalExample {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    let log_rx = args.init_tracing();
+
     let app = AppBuilder::new()
         .main_ui(ModalExample::new())
         .tick_rate(Duration::from_millis(100)) // For cursor blinking
         .register_focus("input")
         .initial_focus("input")
+        .enable_dev_console(args.dev)
+        .with_log_receiver(log_rx)
         .build()?;
 
     app.run().await?;

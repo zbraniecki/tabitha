@@ -221,13 +221,24 @@ impl MainUi for CounterApp {
 // Main
 // =============================================================================
 
+#[path = "_common/mod.rs"]
+mod common;
+use common::Args;
+
+use clap::Parser;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    let log_rx = args.init_tracing();
+
     // Build the application
     let app = AppBuilder::new()
         .main_ui(CounterApp::new())
         .add_task("ticker", TickerTask::new(Duration::from_secs(1)))
         .mouse_capture(true) // Enable mouse capture (default)
+        .enable_dev_console(args.dev)
+        .with_log_receiver(log_rx)
         .build()?;
 
     // Run the application

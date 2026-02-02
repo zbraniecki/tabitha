@@ -13,6 +13,11 @@
 //! - Up/Down: Navigate rows in the focused table
 //! - q/Ctrl+C: Quit
 
+#[path = "_common/mod.rs"]
+mod common;
+use clap::Parser;
+use common::Args;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -377,12 +382,17 @@ impl MainUi for FocusTablesApp {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    let log_rx = args.init_tracing();
+
     // Build the application with tabs
     let app = AppBuilder::new()
         .main_ui(FocusTablesApp::new())
         .add_tab(WelcomeTab)
         .add_tab(DataTab::new())
         .mouse_capture(false)
+        .enable_dev_console(args.dev)
+        .with_log_receiver(log_rx)
         .build()?;
 
     // Run the application

@@ -17,6 +17,10 @@ futures = "0.3"
 smallvec = "1.15"
 thiserror = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }
 
 [features]
 default = []

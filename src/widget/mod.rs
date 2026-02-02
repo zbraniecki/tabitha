@@ -48,6 +48,7 @@
 //! ```
 
 mod datatable;
+mod dev_console;
 mod modal;
 mod textbox;
 
@@ -55,6 +56,7 @@ pub use datatable::{
     Column, ColumnAlign, ColumnType, ColumnWidth, DataTable, DataTableConfig, DataTableEvent,
     SelectionMode, SimpleRow, SortDirection, SortState, TableRow,
 };
+pub use dev_console::{DevConsole, LogLine};
 pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult};
 pub use textbox::{TextBox, TextBoxConfig, TextBoxEvent};
 

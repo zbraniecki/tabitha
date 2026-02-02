@@ -34,9 +34,12 @@
 // Submodules
 mod dialog;
 mod focus;
+mod rendering;
+mod types;
 
-// Re-export all public types from dialog module
-pub use dialog::{Modal, ModalButton, ModalConfig, ModalInput, ModalResult};
+// Re-export all public types
+pub use dialog::Modal;
+pub use types::{ModalButton, ModalConfig, ModalInput, ModalResult};
 
 use ratatui::{layout::Rect, Frame};
 
@@ -333,38 +336,19 @@ impl ModalManager {
     /// This is called by the App's draw method after drawing the main UI.
     pub(crate) fn draw(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         use ratatui::{
-            style::Style,
             text::{Line, Span},
-            widgets::{Block, Borders, Clear, Paragraph},
+            widgets::Paragraph,
         };
 
         if let Some(modal) = &self.current {
             // 1. Draw backdrop (full screen dark overlay)
-            let backdrop = Block::default().style(modal.config.backdrop_style);
-            frame.render_widget(backdrop, area);
+            rendering::draw_backdrop(frame, area, &modal.config);
 
-            // 2. Calculate centered modal rect
-            let modal_rect = modal.calculate_modal_rect(area);
+            // 2. Calculate centered modal rect and draw modal box
+            let modal_rect = rendering::calculate_modal_rect(area, &modal.config);
+            let inner = rendering::draw_modal_box(frame, modal_rect, modal.title.as_deref(), theme);
 
-            // 3. Clear the modal area and draw the modal box
-            frame.render_widget(Clear, modal_rect);
-
-            // Use theme accent color for border (focused border since modal is always focused)
-            let border_style = theme.border_focused_style();
-            let mut block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style);
-
-            if let Some(ref title) = modal.title {
-                // Use theme accent foreground color for title (no background)
-                let title_style = Style::default().fg(theme.accent);
-                block = block.title(Span::styled(format!(" {} ", title), title_style));
-            }
-
-            let inner = block.inner(modal_rect);
-            frame.render_widget(block, modal_rect);
-
-            // 4. Layout: message (top) + optional input + buttons (bottom)
+            // 3. Layout: message (top) + optional input + buttons (bottom)
             let is_inline = modal.input.as_ref().map(|i| i.inline).unwrap_or(false);
             let input_height: u16 = if modal.input.is_some() && !is_inline {
                 3
@@ -376,13 +360,23 @@ impl ModalManager {
 
             let mut current_y = inner.y;
 
-            // 5. Render message (and inline input if applicable)
+            // 4. Render message (and inline input if applicable)
             if message_height > 0 {
                 let message_area = Rect::new(inner.x, current_y, inner.width, message_height);
 
                 if is_inline {
                     // Render message and input on the same line
-                    Self::draw_inline_input(modal, frame, message_area, theme);
+                    if let Some(ref input) = modal.input {
+                        let is_focused = modal.focus == focus::ModalFocus::Input;
+                        rendering::draw_inline_input(
+                            frame,
+                            message_area,
+                            &modal.message,
+                            input,
+                            is_focused,
+                            theme,
+                        );
+                    }
                 } else {
                     let content_style = theme.fg_style();
                     let message_lines: Vec<Line> = modal
@@ -396,91 +390,30 @@ impl ModalManager {
                 current_y += message_height;
             }
 
-            // 6. Render input field (if present and not inline)
-            if modal.input.is_some() && input_height > 0 && !is_inline {
-                let input_area = Rect::new(inner.x, current_y, inner.width, input_height);
-                modal.draw_input(frame, input_area, theme);
-                current_y += input_height;
+            // 5. Render input field (if present and not inline)
+            if let Some(ref input) = modal.input {
+                if input_height > 0 && !is_inline {
+                    let input_area = Rect::new(inner.x, current_y, inner.width, input_height);
+                    let is_focused = modal.focus == focus::ModalFocus::Input;
+                    rendering::draw_input(frame, input_area, input, is_focused, theme);
+                    current_y += input_height;
+                }
             }
 
-            // 7. Render buttons
+            // 6. Render buttons
             if current_y < inner.y + inner.height {
                 let button_area = Rect::new(inner.x, current_y, inner.width, 1);
-                modal.draw_buttons(frame, button_area, theme);
+                let buttons_focused = modal.focus == focus::ModalFocus::Buttons;
+                rendering::draw_buttons(
+                    frame,
+                    button_area,
+                    &modal.buttons,
+                    modal.focused_button,
+                    buttons_focused,
+                    theme,
+                );
             }
         }
-    }
-
-    /// Draw the message and inline input field on the same line.
-    fn draw_inline_input(modal: &Modal, frame: &mut Frame, area: Rect, theme: &Theme) {
-        use focus::ModalFocus;
-        use ratatui::{
-            style::{Color, Style},
-            text::{Line, Span},
-            widgets::Paragraph,
-        };
-
-        let Some(ref input) = modal.input else {
-            return;
-        };
-
-        let is_focused = modal.focus == ModalFocus::Input;
-        // For inline input, use a subtle background to make it stand out
-        let input_style = if is_focused {
-            // Focused: accent foreground on secondary background
-            Style::default().fg(theme.accent).bg(theme.secondary)
-        } else {
-            // Unfocused: muted foreground on muted background
-            Style::default().fg(theme.muted_foreground).bg(theme.muted)
-        };
-
-        // Calculate the message width
-        let message_width = modal.message.chars().count() as u16;
-        let space_after_message = 1u16;
-        let input_start = message_width + space_after_message;
-        let input_width = area.width.saturating_sub(input_start).max(10);
-
-        // Build the line with message + input
-        let content_style = theme.fg_style();
-        let mut spans = vec![Span::styled(&modal.message, content_style)];
-        spans.push(Span::raw(" "));
-
-        // Show placeholder if empty and not focused
-        let display_text = if input.value.is_empty() && !is_focused {
-            input.placeholder.as_deref().unwrap_or("")
-        } else {
-            &input.value
-        };
-
-        // Build the input portion with cursor
-        if is_focused {
-            // Show cursor
-            let before: String = display_text.chars().take(input.cursor).collect();
-            let cursor_char = display_text.chars().nth(input.cursor).unwrap_or(' ');
-            let after: String = display_text.chars().skip(input.cursor + 1).collect();
-
-            // Pad to fill input width
-            let total_len = before.chars().count() + 1 + after.chars().count();
-            let padding = " ".repeat((input_width as usize).saturating_sub(total_len));
-
-            spans.push(Span::styled(before, input_style));
-            spans.push(Span::styled(
-                cursor_char.to_string(),
-                Style::default().bg(Color::White).fg(Color::Black),
-            ));
-            spans.push(Span::styled(format!("{}{}", after, padding), input_style));
-        } else {
-            // Pad to fill input width
-            let padding =
-                " ".repeat((input_width as usize).saturating_sub(display_text.chars().count()));
-            spans.push(Span::styled(
-                format!("{}{}", display_text, padding),
-                input_style,
-            ));
-        }
-
-        let line = Line::from(spans);
-        frame.render_widget(Paragraph::new(line), area);
     }
 }
 

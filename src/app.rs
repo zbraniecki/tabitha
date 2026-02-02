@@ -589,6 +589,18 @@ impl<M: MainUi + 'static> App<M> {
         let mut event_rx = event_rx;
         let mut should_quit = false;
 
+        // Call on_mount for main_ui before starting the event loop
+        {
+            let mut ctx = AppContext::with_task_manager(
+                terminal,
+                &mut self.tab_manager,
+                &mut self.focus_manager,
+                &mut self.modal_manager,
+                task_manager,
+            );
+            self.main_ui.on_mount(&mut ctx);
+        }
+
         loop {
             // Clean up finished runtime tasks periodically
             task_manager.cleanup_finished();

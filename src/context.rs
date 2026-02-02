@@ -416,6 +416,20 @@ impl FocusEventContext<'_> {
         self.manager.is_focused(id)
     }
 
+    /// Check if an element is focused or is an ancestor of the focused element.
+    ///
+    /// This is useful for highlighting parent containers when a child is focused.
+    pub fn is_focused_or_within(&self, id: &str) -> bool {
+        self.manager.is_focused_or_within(id)
+    }
+
+    /// Get the current focus path.
+    ///
+    /// Returns a slice of node IDs from root to the currently focused element.
+    pub fn focus_path(&self) -> &[String] {
+        self.manager.focus_path()
+    }
+
     /// Set focus to a specific element by ID.
     ///
     /// Returns `true` if the element was found and focused.
@@ -428,8 +442,23 @@ impl FocusEventContext<'_> {
         self.manager.clear_focus();
     }
 
+    /// Move focus to the next sibling element at the current level.
+    ///
+    /// Returns `true` if focus moved.
+    pub fn next_sibling(&mut self) -> bool {
+        self.manager.next_sibling()
+    }
+
+    /// Move focus to the previous sibling element at the current level.
+    ///
+    /// Returns `true` if focus moved.
+    pub fn prev_sibling(&mut self) -> bool {
+        self.manager.prev_sibling()
+    }
+
     /// Move focus to the next element.
     ///
+    /// This is an alias for `next_sibling()`.
     /// Returns `true` if focus moved.
     pub fn focus_next(&mut self) -> bool {
         self.manager.focus_next()
@@ -437,19 +466,47 @@ impl FocusEventContext<'_> {
 
     /// Move focus to the previous element.
     ///
+    /// This is an alias for `prev_sibling()`.
     /// Returns `true` if focus moved.
     pub fn focus_prev(&mut self) -> bool {
         self.manager.focus_prev()
     }
 
-    /// Register a focusable element.
+    /// Enter the focused element's child scope.
+    ///
+    /// If the currently focused element has children, focuses the first child.
+    /// Returns `true` if focus moved into a child.
+    pub fn focus_into(&mut self) -> bool {
+        self.manager.focus_into()
+    }
+
+    /// Exit the current focus scope to the parent.
+    ///
+    /// Returns `true` if focus moved to a parent.
+    pub fn focus_out(&mut self) -> bool {
+        self.manager.focus_out()
+    }
+
+    /// Register a focusable element as a root-level node.
     ///
     /// Elements are focused in registration order.
     pub fn register(&mut self, id: &str) {
         self.manager.register(id);
     }
 
-    /// Unregister a focusable element.
+    /// Register a child node under a parent.
+    ///
+    /// Creates the parent if it doesn't exist.
+    pub fn register_child(&mut self, parent_id: &str, child_id: &str) {
+        self.manager.register_child(parent_id, child_id);
+    }
+
+    /// Register multiple children under a parent.
+    pub fn register_children(&mut self, parent_id: &str, children: &[&str]) {
+        self.manager.register_children(parent_id, children);
+    }
+
+    /// Unregister a focusable element and all its children.
     pub fn unregister(&mut self, id: &str) {
         self.manager.unregister(id);
     }

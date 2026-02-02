@@ -563,10 +563,10 @@ impl Component for Modal {
         self.open
     }
 
-    fn focus_children(&self) -> Vec<&str> {
+    fn focus_children(&self) -> &[&str] {
         // Modal manages its own button focus internally
         // We don't expose button IDs to the focus manager
-        vec![]
+        &[]
     }
 }
 

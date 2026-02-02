@@ -130,11 +130,54 @@ pub trait Component: Send {
     /// List of focusable child IDs in navigation order.
     ///
     /// Override this if your component contains other focusable components
-    /// and you want to control their navigation order.
+    /// and you want to control their navigation order. The framework will
+    /// automatically register these IDs when the component is mounted.
     ///
     /// The default returns an empty list (no focusable children).
-    fn focus_children(&self) -> Vec<&str> {
-        vec![]
+    fn focus_children(&self) -> &[&str] {
+        &[]
+    }
+
+    /// Called when this component is mounted to the UI.
+    ///
+    /// Override this to perform initialization, register focusable elements,
+    /// or set up resources. The default implementation automatically registers
+    /// all IDs returned by `focus_children()` with the focus manager.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn on_mount(&mut self, ctx: &mut AppContext) {
+    ///     // Register focus children (auto-called by default)
+    ///     for id in self.focus_children() {
+    ///         ctx.focus().register(id);
+    ///     }
+    ///
+    ///     // Custom initialization
+    ///     self.load_data();
+    /// }
+    /// ```
+    fn on_mount(&mut self, ctx: &mut AppContext) {
+        // Auto-register focusable children
+        let children = self.focus_children();
+        if let Some(first) = children.first() {
+            ctx.focus().register(first);
+            for child in &children[1..] {
+                ctx.focus().register_child(first, child);
+            }
+        }
+    }
+
+    /// Called when this component is unmounted from the UI.
+    ///
+    /// Override this to perform cleanup, unregister focusable elements,
+    /// or release resources. The default implementation automatically
+    /// unregisters all IDs returned by `focus_children()`.
+    fn on_unmount(&mut self, ctx: &mut AppContext) {
+        // Auto-unregister focusable children
+        for id in self.focus_children() {
+            ctx.focus().unregister(id);
+        }
     }
 }
 

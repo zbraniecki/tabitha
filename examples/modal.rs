@@ -283,8 +283,8 @@ impl Component for ModalExample {
         Some("app")
     }
 
-    fn focus_children(&self) -> Vec<&str> {
-        vec!["input"]
+    fn focus_children(&self) -> &[&str] {
+        &["input"]
     }
 }
 

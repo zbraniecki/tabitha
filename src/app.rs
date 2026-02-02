@@ -3,6 +3,7 @@
 //! This module provides the `AppBuilder` for constructing applications
 //! and the `App` struct that runs the main event loop.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::EventStream;
@@ -10,13 +11,16 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
-use crate::bus::{MessageBus, TaskMessage, TaskSender};
+use crate::bus::{MessageBus, MessageBusReceiver, TaskMessage, TaskSender};
 use crate::component::MainUi;
 use crate::context::{AppContext, DrawContext, TabEventContext};
 use crate::event::{AppEvent, Event, KeyCode};
 use crate::focus::FocusManager;
 use crate::tabs::{Tab, TabManager};
-use crate::task::{BoxedTaskFuture, Task, TaskContext, TaskFactory, TaskHandle};
+use crate::task::{
+    BoxedTaskFuture, CongestionController, Task, TaskContext, TaskFactory, TaskHandle,
+};
+use crate::task_manager::TaskManager;
 use crate::terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
 use crate::theme::Theme;
 use crate::widget::{DevConsole, ModalManager};
@@ -101,6 +105,7 @@ pub struct AppBuilder<M: MainUi> {
     main_ui: Option<M>,
     tasks: Vec<PendingTask>,
     bus: MessageBus,
+    bus_receiver: MessageBusReceiver,
     tab_manager: TabManager,
     focus_manager: FocusManager,
     modal_manager: ModalManager,
@@ -114,10 +119,12 @@ pub struct AppBuilder<M: MainUi> {
 impl<M: MainUi + 'static> AppBuilder<M> {
     /// Create a new application builder.
     pub fn new() -> Self {
+        let (bus, bus_receiver) = MessageBusReceiver::new();
         Self {
             main_ui: None,
             tasks: Vec::new(),
-            bus: MessageBus::new(),
+            bus,
+            bus_receiver,
             tab_manager: TabManager::new(),
             focus_manager: FocusManager::new(),
             modal_manager: ModalManager::new(),
@@ -196,7 +203,14 @@ impl<M: MainUi + 'static> AppBuilder<M> {
         // Create a factory that will spawn the task with its sender
         let factory: TaskFactory = Box::new(move |ctx: TaskContext| {
             Box::pin(async move {
-                task.run(sender, ctx).await;
+                match task.run(sender, ctx).await {
+                    Ok(()) => {
+                        tracing::info!(task_name = name, "Build-time task completed successfully");
+                    }
+                    Err(e) => {
+                        tracing::error!(task_name = name, error = %e, "Build-time task failed with error");
+                    }
+                }
             }) as BoxedTaskFuture
         });
 
@@ -263,6 +277,7 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             main_ui,
             tasks: self.tasks,
             bus: self.bus,
+            bus_receiver: Some(self.bus_receiver),
             tab_manager: self.tab_manager,
             focus_manager: self.focus_manager,
             modal_manager: self.modal_manager,
@@ -308,6 +323,7 @@ pub struct App<M: MainUi> {
     main_ui: M,
     tasks: Vec<PendingTask>,
     bus: MessageBus,
+    bus_receiver: Option<MessageBusReceiver>,
     tab_manager: TabManager,
     focus_manager: FocusManager,
     modal_manager: ModalManager,
@@ -340,22 +356,36 @@ impl<M: MainUi + 'static> App<M> {
         // Set up cancellation for tasks
         let (cancel_tx, cancel_rx) = watch::channel(false);
 
+        // Create shared congestion controller for backpressure management
+        let congestion = Arc::new(CongestionController::default());
+
+        // Create the task manager for runtime task spawning
+        let mut task_manager = TaskManager::with_congestion(
+            cancel_tx.clone(),
+            self.bus.clone(),
+            Arc::clone(&congestion),
+        );
+
         // Take the unified message receiver
         let message_rx = self
-            .bus
-            .take_receiver()
-            .ok_or(RuntimeError::ReceiverAlreadyTaken)?;
+            .bus_receiver
+            .take()
+            .ok_or(RuntimeError::ReceiverAlreadyTaken)?
+            .take();
 
-        // Spawn all background tasks
+        // Spawn all build-time background tasks
         let mut task_handles: Vec<TaskHandle> = Vec::with_capacity(self.tasks.len());
         for pending in self.tasks.drain(..) {
-            tracing::trace!(task_name = pending.name, "spawning task");
-            let ctx = TaskContext::new(cancel_rx.clone());
+            tracing::trace!(task_name = pending.name, "spawning build-time task");
+            let ctx = TaskContext::new(cancel_rx.clone(), Arc::clone(&congestion));
             let future = (pending.factory)(ctx);
             let handle = tokio::spawn(future);
             task_handles.push(TaskHandle::new(pending.name, handle));
         }
-        tracing::trace!(task_count = task_handles.len(), "all tasks spawned");
+        tracing::trace!(
+            task_count = task_handles.len(),
+            "all build-time tasks spawned"
+        );
 
         // Create unified event channel for structured concurrency
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
@@ -365,17 +395,28 @@ impl<M: MainUi + 'static> App<M> {
 
         // Run event sources concurrently with fail-fast semantics
         let result = self
-            .run_with_structured_concurrency(&mut terminal, event_tx, event_rx, message_rx)
+            .run_with_structured_concurrency(
+                &mut terminal,
+                event_tx,
+                event_rx,
+                message_rx,
+                &mut task_manager,
+                &mut task_handles,
+            )
             .await;
 
         // Signal all tasks to stop
         tracing::trace!("sending cancellation signal");
         let _ = cancel_tx.send(true);
 
-        // Wait for tasks to finish (with shared timeout deadline to avoid accumulation)
+        // Collect runtime task handles and combine with build-time handles
+        let mut all_handles: Vec<TaskHandle> = task_manager.take_handles();
+        all_handles.extend(task_handles);
+
+        // Wait for all tasks to finish (with shared timeout deadline to avoid accumulation)
         let shutdown_deadline =
             tokio::time::Instant::now() + Duration::from_secs(SHUTDOWN_TIMEOUT_SECONDS);
-        for handle in task_handles {
+        for handle in all_handles {
             let task_name = handle.name;
             match tokio::time::timeout_at(shutdown_deadline, handle.join()).await {
                 Ok(Ok(())) => tracing::trace!(task_name, "task completed"),
@@ -404,8 +445,10 @@ impl<M: MainUi + 'static> App<M> {
         &mut self,
         terminal: &mut Terminal,
         event_tx: mpsc::Sender<AppEvent>,
-        mut event_rx: mpsc::Receiver<AppEvent>,
+        event_rx: mpsc::Receiver<AppEvent>,
         message_rx: mpsc::Receiver<TaskMessage>,
+        task_manager: &mut TaskManager,
+        build_time_handles: &mut Vec<TaskHandle>,
     ) -> Result<(), AppError> {
         // Clone event_tx for each event source task
         let input_tx = event_tx.clone();
@@ -417,7 +460,8 @@ impl<M: MainUi + 'static> App<M> {
         let mut task_handle = tokio::spawn(Self::task_coordinator(task_tx, message_rx));
 
         // Run main loop concurrently with event sources using pin! for select
-        let main_loop_fut = std::pin::pin!(self.main_loop(terminal, &mut event_rx));
+        let main_loop_fut =
+            std::pin::pin!(self.main_loop(terminal, event_rx, task_manager, build_time_handles));
 
         // Fail-fast: if any task completes (success or error), abort the others
         let result = tokio::select! {
@@ -538,11 +582,17 @@ impl<M: MainUi + 'static> App<M> {
     async fn main_loop(
         &mut self,
         terminal: &mut Terminal,
-        event_rx: &mut mpsc::Receiver<AppEvent>,
+        event_rx: mpsc::Receiver<AppEvent>,
+        task_manager: &mut TaskManager,
+        build_time_handles: &mut Vec<TaskHandle>,
     ) -> Result<(), AppError> {
+        let mut event_rx = event_rx;
         let mut should_quit = false;
 
         loop {
+            // Clean up finished runtime tasks periodically
+            task_manager.cleanup_finished();
+
             // Receive next event
             let event = match event_rx.recv().await {
                 Some(event) => event,
@@ -553,7 +603,13 @@ impl<M: MainUi + 'static> App<M> {
             };
 
             // Process the event
-            let mut needs_redraw = self.process_app_event(event, terminal, &mut should_quit)?;
+            let mut needs_redraw = self.process_app_event(
+                event,
+                terminal,
+                task_manager,
+                build_time_handles,
+                &mut should_quit,
+            )?;
 
             // Poll log receiver and feed logs to dev console
             if let Some(ref mut log_rx) = self.log_rx {
@@ -584,18 +640,21 @@ impl<M: MainUi + 'static> App<M> {
         &mut self,
         event: AppEvent,
         terminal: &mut Terminal,
+        task_manager: &mut TaskManager,
+        _build_time_handles: &mut Vec<TaskHandle>,
         should_quit: &mut bool,
     ) -> Result<bool, AppError> {
         match event {
             AppEvent::Terminal(event) => {
-                self.dispatch_terminal_event(&event, terminal, should_quit)
+                self.dispatch_terminal_event(&event, terminal, task_manager, should_quit)
             }
             AppEvent::TaskMessage(task_message) => {
-                let mut ctx = AppContext::new(
+                let mut ctx = AppContext::with_task_manager(
                     terminal,
                     &mut self.tab_manager,
                     &mut self.focus_manager,
                     &mut self.modal_manager,
+                    task_manager,
                 );
                 let redraw = self.main_ui.handle_task_message(
                     task_message.task_name,
@@ -606,11 +665,12 @@ impl<M: MainUi + 'static> App<M> {
                 Ok(redraw)
             }
             AppEvent::Tick => {
-                let mut ctx = AppContext::new(
+                let mut ctx = AppContext::with_task_manager(
                     terminal,
                     &mut self.tab_manager,
                     &mut self.focus_manager,
                     &mut self.modal_manager,
+                    task_manager,
                 );
                 self.main_ui.tick(&mut ctx);
                 *should_quit = ctx.should_quit();
@@ -624,6 +684,7 @@ impl<M: MainUi + 'static> App<M> {
         &mut self,
         event: &Event,
         terminal: &mut Terminal,
+        task_manager: &mut TaskManager,
         should_quit: &mut bool,
     ) -> Result<bool, AppError> {
         // Check for dev console toggle first (` key)
@@ -641,11 +702,12 @@ impl<M: MainUi + 'static> App<M> {
 
         // Phase 1: MainUi handles the event
         let main_result = {
-            let mut ctx = AppContext::new(
+            let mut ctx = AppContext::with_task_manager(
                 terminal,
                 &mut self.tab_manager,
                 &mut self.focus_manager,
                 &mut self.modal_manager,
+                task_manager,
             );
             let result = if modal_consumed {
                 self.main_ui.handle_event(event, &mut ctx);

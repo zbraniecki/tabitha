@@ -49,8 +49,13 @@ enum TickerMessage {
 
 impl Task for TickerTask {
     type Message = TickerMessage;
+    type Error = std::convert::Infallible;
 
-    async fn run(self, sender: TaskSender<Self::Message>, mut ctx: TaskContext) {
+    async fn run(
+        self,
+        sender: TaskSender<Self::Message>,
+        mut ctx: TaskContext,
+    ) -> Result<(), Self::Error> {
         let mut count = 0u64;
         let mut interval = tokio::time::interval(self.interval);
 
@@ -71,6 +76,7 @@ impl Task for TickerTask {
                 }
             }
         }
+        Ok(())
     }
 }
 

@@ -8,6 +8,8 @@ use ratatui::{layout::Rect, Frame};
 
 use crate::focus::FocusManager;
 use crate::tabs::{TabInfo, TabManager};
+use crate::task::{BlockingHandle, CongestionController};
+use crate::task_manager::{TaskManager, TaskManagerContext};
 use crate::terminal::{Terminal, TerminalError};
 use crate::theme::Theme;
 use crate::widget::{Modal, ModalManager, ModalResult};
@@ -34,6 +36,7 @@ pub struct TabEventContext<'a> {
 
 impl<'a> TabEventContext<'a> {
     /// Create a new tab event context.
+    #[allow(dead_code)]
     pub(crate) fn new(terminal: &'a mut Terminal, focus_manager: &'a mut FocusManager) -> Self {
         Self {
             terminal,
@@ -91,6 +94,8 @@ impl<'a> TabEventContext<'a> {
 /// - Access terminal state
 /// - Control tab selection
 /// - Navigate focus
+/// - Spawn and manage runtime tasks
+/// - Spawn blocking tasks for CPU-intensive work
 ///
 /// # Example
 ///
@@ -110,6 +115,11 @@ impl<'a> TabEventContext<'a> {
 ///             return EventResult::Handled;
 ///         }
 ///
+///         // Spawn a runtime task
+///         if let Some(mut task_ctx) = ctx.task_manager() {
+///             task_ctx.spawn("worker", MyTask).ok();
+///         }
+///
 ///         EventResult::Unhandled
 ///     }
 /// }
@@ -119,11 +129,13 @@ pub struct AppContext<'a> {
     pub(crate) tab_manager: &'a mut TabManager,
     pub(crate) focus_manager: &'a mut FocusManager,
     pub(crate) modal_manager: &'a mut ModalManager,
+    pub(crate) task_manager: Option<&'a mut TaskManager>,
     pub(crate) should_quit: bool,
 }
 
 impl<'a> AppContext<'a> {
     /// Create a new application context.
+    #[allow(dead_code)]
     pub(crate) fn new(
         terminal: &'a mut Terminal,
         tab_manager: &'a mut TabManager,
@@ -135,6 +147,25 @@ impl<'a> AppContext<'a> {
             tab_manager,
             focus_manager,
             modal_manager,
+            task_manager: None,
+            should_quit: false,
+        }
+    }
+
+    /// Create a new application context with task manager.
+    pub(crate) fn with_task_manager(
+        terminal: &'a mut Terminal,
+        tab_manager: &'a mut TabManager,
+        focus_manager: &'a mut FocusManager,
+        modal_manager: &'a mut ModalManager,
+        task_manager: &'a mut TaskManager,
+    ) -> Self {
+        Self {
+            terminal,
+            tab_manager,
+            focus_manager,
+            modal_manager,
+            task_manager: Some(task_manager),
             should_quit: false,
         }
     }
@@ -252,6 +283,118 @@ impl<'a> AppContext<'a> {
         ModalEventContext {
             manager: self.modal_manager,
         }
+    }
+
+    /// Access the task manager for runtime task spawning.
+    ///
+    /// Returns `Some(TaskManagerContext)` if the task manager is available,
+    /// `None` otherwise. The task manager is only available during event
+    /// handling when the application is running.
+    ///
+    /// Use this to spawn, monitor, and abort background tasks dynamically
+    /// at runtime.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
+    ///     if let Some(mut task_ctx) = ctx.task_manager() {
+    ///         // Spawn a new task
+    ///         if !task_ctx.is_running("worker") {
+    ///             if let Err(e) = task_ctx.spawn("worker", WorkerTask::new()) {
+    ///                 tracing::error!("Failed to spawn worker: {}", e);
+    ///             }
+    ///         }
+    ///         
+    ///         // List running tasks
+    ///         for name in task_ctx.list_tasks() {
+    ///             tracing::info!("Running task: {}", name);
+    ///         }
+    ///         
+    ///         // Abort a task
+    ///         if task_ctx.abort("worker") {
+    ///             tracing::info!("Worker aborted");
+    ///         }
+    ///     }
+    ///     EventResult::Unhandled
+    /// }
+    /// ```
+    #[inline]
+    pub fn task_manager(&mut self) -> Option<TaskManagerContext<'_>> {
+        self.task_manager
+            .as_mut()
+            .map(|tm| TaskManagerContext::new(tm))
+    }
+
+    /// Spawn a blocking operation on the tokio blocking thread pool.
+    ///
+    /// This method is useful for CPU-intensive or blocking I/O operations
+    /// that would otherwise block the async runtime. The task runs on a
+    /// dedicated thread pool managed by tokio.
+    ///
+    /// Returns a `BlockingHandle<T>` that can be used to await the result
+    /// or abort the task.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `F` - The function type to execute
+    /// * `T` - The return type of the function
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The function to execute on the blocking thread pool
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::AppContext;
+    ///
+    /// fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
+    ///     // Spawn a CPU-intensive computation
+    ///     let handle = ctx.spawn_blocking(|| {
+    ///         // This runs on a dedicated thread
+    ///         let mut sum = 0u64;
+    ///         for i in 1..1_000_000 {
+    ///             sum += i;
+    ///         }
+    ///         sum
+    ///     });
+    ///
+    ///     // Store the handle to await later
+    ///     self.computation = Some(handle);
+    ///     
+    ///     EventResult::Unhandled
+    /// }
+    /// ```
+    pub fn spawn_blocking<F, T>(&self, f: F) -> BlockingHandle<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        tracing::trace!("spawning blocking task from AppContext");
+        let handle = tokio::task::spawn_blocking(f);
+        BlockingHandle::new(handle)
+    }
+
+    /// Get a reference to the congestion controller if available.
+    ///
+    /// Returns `Some(&CongestionController)` if the task manager is available,
+    /// `None` otherwise. Use this to check backpressure state.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
+    ///     if let Some(congestion) = ctx.congestion() {
+    ///         if congestion.is_congested() {
+    ///             tracing::warn!("System is experiencing congestion");
+    ///         }
+    ///     }
+    ///     EventResult::Unhandled
+    /// }
+    /// ```
+    pub fn congestion(&self) -> Option<&CongestionController> {
+        self.task_manager.as_ref().map(|tm| tm.congestion())
     }
 }
 
@@ -525,6 +668,7 @@ pub struct DrawContext<'a> {
 
 impl<'a> DrawContext<'a> {
     /// Create a new draw context.
+    #[allow(dead_code)]
     pub(crate) fn new(
         tab_manager: &'a TabManager,
         focus_manager: &'a FocusManager,

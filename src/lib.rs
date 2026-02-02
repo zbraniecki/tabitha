@@ -100,8 +100,10 @@ pub mod context;
 pub mod dev_console_layer;
 pub mod event;
 pub mod focus;
+pub mod macros;
 pub mod tabs;
 pub mod task;
+pub mod task_manager;
 pub mod terminal;
 pub mod theme;
 pub mod widget;
@@ -119,12 +121,15 @@ pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 pub use focus::{EventResult, FocusManager};
 pub use tabs::{BoxedTab, Tab, TabInfo, TabManager};
 pub use task::{Task, TaskContext, TaskHandle};
+pub use task_manager::{SpawnError, TaskManager, TaskManagerContext};
 pub use terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
 pub use theme::Theme;
 
+// The match_task_message macro is automatically exported at crate root by #[macro_export]
+
 // Conditionally re-export blocking task helpers
 #[cfg(feature = "blocking-tasks")]
-pub use task::{spawn_blocking, spawn_blocking_or_err, BlockingTaskError};
+pub use task::{spawn_blocking, spawn_blocking_or_err, BlockingHandle, BlockingTaskError};
 
 // Re-export widget types
 pub use widget::{

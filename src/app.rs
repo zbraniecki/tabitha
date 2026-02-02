@@ -13,7 +13,7 @@ use tokio::sync::watch;
 use crate::bus::{MessageBus, TaskMessage, TaskSender};
 use crate::component::MainUi;
 use crate::context::{AppContext, DrawContext, TabEventContext};
-use crate::event::{Event, KeyCode};
+use crate::event::{AppEvent, Event, KeyCode};
 use crate::focus::FocusManager;
 use crate::tabs::{Tab, TabManager};
 use crate::task::{BoxedTaskFuture, Task, TaskContext, TaskFactory, TaskHandle};
@@ -58,6 +58,12 @@ pub enum RuntimeError {
     /// A background task failed to spawn.
     #[error("failed to spawn task '{0}': {1}")]
     TaskSpawnFailed(&'static str, std::io::Error),
+    /// The event channel was closed.
+    #[error("event channel closed")]
+    EventChannelClosed,
+    /// An event loop task panicked.
+    #[error("event loop task '{0}' panicked")]
+    TaskPanicked(&'static str),
 }
 
 /// A pending task to be spawned when the app runs.
@@ -312,6 +318,9 @@ impl<M: MainUi + 'static> App<M> {
     ///
     /// This sets up the terminal, spawns background tasks, and runs
     /// the main event loop until the application quits.
+    ///
+    /// Uses structured concurrency with fail-fast semantics: if any
+    /// event source task fails, the entire application stops.
     pub async fn run(mut self) -> Result<(), AppError> {
         let _span = tracing::trace_span!("app_run").entered();
 
@@ -326,12 +335,12 @@ impl<M: MainUi + 'static> App<M> {
         let (cancel_tx, cancel_rx) = watch::channel(false);
 
         // Take the unified message receiver
-        let mut message_rx = self
+        let message_rx = self
             .bus
             .take_receiver()
             .ok_or(RuntimeError::ReceiverAlreadyTaken)?;
 
-        // Spawn all tasks
+        // Spawn all background tasks
         let mut task_handles: Vec<TaskHandle> = Vec::with_capacity(self.tasks.len());
         for pending in self.tasks.drain(..) {
             tracing::trace!(task_name = pending.name, "spawning task");
@@ -342,8 +351,16 @@ impl<M: MainUi + 'static> App<M> {
         }
         tracing::trace!(task_count = task_handles.len(), "all tasks spawned");
 
-        // Run the event loop
-        let result = self.run_event_loop(&mut terminal, &mut message_rx).await;
+        // Create unified event channel for structured concurrency
+        let (event_tx, event_rx) = mpsc::channel(256);
+
+        // Initial draw before starting event loop
+        self.draw(&mut terminal)?;
+
+        // Run event sources concurrently with fail-fast semantics
+        let result = self
+            .run_with_structured_concurrency(&mut terminal, event_tx, event_rx, message_rx)
+            .await;
 
         // Signal all tasks to stop
         tracing::trace!("sending cancellation signal");
@@ -367,190 +384,175 @@ impl<M: MainUi + 'static> App<M> {
         result
     }
 
-    /// The main event loop.
-    async fn run_event_loop(
+    /// Run the application with structured concurrency.
+    ///
+    /// Spawns separate tasks for:
+    /// - Input processing (terminal events)
+    /// - Task message coordination
+    ///
+    /// The main loop runs in the current task for &mut self access.
+    /// Uses `tokio::select!` for fail-fast behavior - if any task fails,
+    /// the select returns immediately with the error.
+    async fn run_with_structured_concurrency(
         &mut self,
         terminal: &mut Terminal,
-        message_rx: &mut mpsc::Receiver<TaskMessage>,
+        event_tx: mpsc::Sender<AppEvent>,
+        mut event_rx: mpsc::Receiver<AppEvent>,
+        message_rx: mpsc::Receiver<TaskMessage>,
     ) -> Result<(), AppError> {
-        // Create the event stream for terminal events
+        // Clone event_tx for each event source task
+        let input_tx = event_tx.clone();
+        let task_tx = event_tx.clone();
+
+        // Spawn event source tasks
+        let mut input_handle = tokio::spawn(Self::input_processor(input_tx, self.tick_rate));
+
+        let mut task_handle = tokio::spawn(Self::task_coordinator(task_tx, message_rx));
+
+        // Run main loop concurrently with event sources using pin! for select
+        let main_loop_fut = std::pin::pin!(self.main_loop(terminal, &mut event_rx));
+
+        // Fail-fast: if any task completes (success or error), abort the others
+        let result = tokio::select! {
+            biased;
+
+            // Event source tasks - propagate errors immediately (fail-fast)
+            result = &mut input_handle => {
+                // Task completed - abort the other
+                task_handle.abort();
+                // Propagate any join error, then the task result
+                result.map_err(|_| AppError::Runtime(RuntimeError::TaskPanicked("input_processor")))?
+            }
+            result = &mut task_handle => {
+                // Task completed - abort the other
+                input_handle.abort();
+                result.map_err(|_| AppError::Runtime(RuntimeError::TaskPanicked("task_coordinator")))?
+            }
+
+            // Main loop task
+            result = main_loop_fut => {
+                // Main loop completed - abort event sources
+                input_handle.abort();
+                task_handle.abort();
+                result
+            }
+        };
+
+        // Wait for aborted tasks to finish (they should exit quickly)
+        let _ = tokio::join!(input_handle, task_handle);
+
+        result
+    }
+
+    /// Input processor task.
+    ///
+    /// Reads terminal events and sends them as AppEvent::Terminal.
+    /// Also handles tick events when tick_rate is set.
+    async fn input_processor(
+        event_tx: mpsc::Sender<AppEvent>,
+        tick_rate: Option<Duration>,
+    ) -> Result<(), AppError> {
         let mut event_stream = EventStream::new();
+        let mut tick_interval = tick_rate.map(tokio::time::interval);
 
-        // Optional tick interval
-        let mut tick_interval = self.tick_rate.map(tokio::time::interval);
+        loop {
+            tokio::select! {
+                biased;
 
-        // Initial draw
-        self.draw(terminal)?;
+                // Terminal events
+                event = event_stream.next() => {
+                    match event {
+                        Some(Ok(crossterm_event)) => {
+                            let event = Event::from(crossterm_event);
+                            tracing::trace!(?event, "input_processor: received terminal event");
 
-        // Track if we should quit
+                            // Send the event. Dev console toggle is handled in main_loop.
+                            event_tx.send(AppEvent::Terminal(event)).await
+                                .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
+                        }
+                        Some(Err(e)) => return Err(AppError::Io(e)),
+                        None => {
+                            tracing::trace!("input_processor: event stream ended");
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Tick timer (only enabled if tick_rate is set)
+                _ = Self::tick_future(&mut tick_interval), if tick_interval.is_some() => {
+                    tracing::trace!("input_processor: tick");
+                    event_tx.send(AppEvent::Tick).await
+                        .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
+                }
+            }
+        }
+    }
+
+    /// Helper to tick the interval if it exists.
+    ///
+    /// This helper allows using the `if` condition in `select!` with a consistent
+    /// future type, avoiding the type mismatch between `interval.tick()` and `pending()`.
+    async fn tick_future(interval: &mut Option<tokio::time::Interval>) {
+        if let Some(ref mut i) = interval {
+            i.tick().await;
+        }
+    }
+
+    /// Task coordinator task.
+    ///
+    /// Receives messages from background tasks and forwards them as AppEvent::TaskMessage.
+    async fn task_coordinator(
+        event_tx: mpsc::Sender<AppEvent>,
+        mut message_rx: mpsc::Receiver<TaskMessage>,
+    ) -> Result<(), AppError> {
+        loop {
+            match message_rx.recv().await {
+                Some(task_message) => {
+                    tracing::trace!(
+                        task_name = task_message.task_name,
+                        "task_coordinator: received task message"
+                    );
+                    event_tx
+                        .send(AppEvent::TaskMessage(task_message))
+                        .await
+                        .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
+                }
+                None => {
+                    tracing::trace!("task_coordinator: all senders dropped");
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    /// Main event loop.
+    ///
+    /// Processes unified AppEvents from all sources.
+    async fn main_loop(
+        &mut self,
+        terminal: &mut Terminal,
+        event_rx: &mut mpsc::Receiver<AppEvent>,
+    ) -> Result<(), AppError> {
         let mut should_quit = false;
 
         loop {
-            // Wait for an event
-            let (mut needs_redraw, event_to_dispatch) = if let Some(ref mut interval) =
-                tick_interval
-            {
-                tokio::select! {
-                    biased;
-
-                    // Terminal events (keyboard, mouse, resize)
-                    event = event_stream.next() => {
-                        match event {
-                            Some(Ok(crossterm_event)) => {
-                                let event = Event::from(crossterm_event);
-                                tracing::trace!(?event, "received terminal event");
-                                (true, Some(event))
-                            }
-                            Some(Err(e)) => return Err(AppError::Io(e)),
-                            None => {
-                                tracing::trace!("event stream ended");
-                                break;
-                            }
-                        }
-                    }
-
-                    // Messages from background tasks
-                    msg = message_rx.recv() => {
-                        match msg {
-                            Some(task_message) => {
-                                tracing::trace!(task_name = task_message.task_name, "received task message");
-                                let mut ctx = AppContext::new(
-                                    terminal,
-                                    &mut self.tab_manager,
-                                    &mut self.focus_manager,
-                                    &mut self.modal_manager,
-                                );
-                                let redraw = self.main_ui.handle_task_message(
-                                    task_message.task_name,
-                                    task_message.payload,
-                                    &mut ctx,
-                                );
-                                should_quit = ctx.should_quit();
-                                (redraw, None)
-                            }
-                            None => {
-                                tracing::trace!("all task senders dropped");
-                                break;
-                            }
-                        }
-                    }
-
-                    // Tick timer
-                    _ = interval.tick() => {
-                        tracing::trace!("tick");
-                        let mut ctx = AppContext::new(
-                            terminal,
-                            &mut self.tab_manager,
-                            &mut self.focus_manager,
-                            &mut self.modal_manager,
-                        );
-                        self.main_ui.tick(&mut ctx);
-                        should_quit = ctx.should_quit();
-                        (true, None)
-                    }
-                }
-            } else {
-                // No tick timer - pure event-driven
-                tokio::select! {
-                    biased;
-
-                    // Terminal events (keyboard, mouse, resize)
-                    event = event_stream.next() => {
-                        match event {
-                            Some(Ok(crossterm_event)) => {
-                                let event = Event::from(crossterm_event);
-                                tracing::trace!(?event, "received terminal event");
-                                (true, Some(event))
-                            }
-                            Some(Err(e)) => return Err(AppError::Io(e)),
-                            None => {
-                                tracing::trace!("event stream ended");
-                                break;
-                            }
-                        }
-                    }
-
-                    // Messages from background tasks
-                    msg = message_rx.recv() => {
-                        match msg {
-                            Some(task_message) => {
-                                tracing::trace!(task_name = task_message.task_name, "received task message");
-                                let mut ctx = AppContext::new(
-                                    terminal,
-                                    &mut self.tab_manager,
-                                    &mut self.focus_manager,
-                                    &mut self.modal_manager,
-                                );
-                                let redraw = self.main_ui.handle_task_message(
-                                    task_message.task_name,
-                                    task_message.payload,
-                                    &mut ctx,
-                                );
-                                should_quit = ctx.should_quit();
-                                (redraw, None)
-                            }
-                            None => {
-                                // All senders dropped - if no tasks, this is expected
-                                // Keep running as long as there are terminal events
-                                tracing::trace!("all task senders dropped");
-                                (false, None)
-                            }
-                        }
-                    }
+            // Receive next event
+            let event = match event_rx.recv().await {
+                Some(event) => event,
+                None => {
+                    tracing::trace!("main_loop: event channel closed");
+                    break;
                 }
             };
+
+            // Process the event
+            let mut needs_redraw = self.process_app_event(event, terminal, &mut should_quit)?;
 
             // Poll log receiver and feed logs to dev console
             if let Some(ref mut log_rx) = self.log_rx {
                 while let Ok(log_line) = log_rx.try_recv() {
                     self.dev_console.push(log_line);
-                }
-            }
-
-            // Dispatch event if we have one
-            if let Some(event) = event_to_dispatch {
-                // Check for dev console toggle first (` key) - only if dev console is enabled
-                if self.dev_console_enabled
-                    && matches!(&event, Event::Key(key) if key.code == KeyCode::Char('`'))
-                {
-                    self.dev_console.toggle();
                     needs_redraw = true;
-                    // Skip normal event processing for the toggle key
-                } else {
-                    // Three-phase event dispatch:
-                    //
-                    // Phase 0: Modal handles the event first (if open)
-                    // Modal events are handled by ModalManager before main UI
-                    let modal_consumed = self.modal_manager.handle_event(&event);
-
-                    // Phase 1: MainUi handles the event (can handle quit, tab switching, etc.)
-                    // Also allows MainUi to check modal results
-                    let main_result = {
-                        let mut ctx = AppContext::new(
-                            terminal,
-                            &mut self.tab_manager,
-                            &mut self.focus_manager,
-                            &mut self.modal_manager,
-                        );
-                        let result = if modal_consumed {
-                            // Modal consumed the event, but still call MainUi
-                            // so it can check for modal results
-                            self.main_ui.handle_event(&event, &mut ctx);
-                            crate::focus::EventResult::StopPropagation
-                        } else {
-                            self.main_ui.handle_event(&event, &mut ctx)
-                        };
-                        should_quit = ctx.should_quit();
-                        result
-                    };
-
-                    // Phase 2: If MainUi didn't handle it, delegate to active tab
-                    // Uses TabEventContext which doesn't include TabManager, avoiding borrow conflicts
-                    if main_result.should_propagate() && !should_quit {
-                        let mut tab_ctx = TabEventContext::new(terminal, &mut self.focus_manager);
-                        self.tab_manager.handle_event(&event, &mut tab_ctx);
-                        should_quit = should_quit || tab_ctx.should_quit();
-                    }
                 }
             }
 
@@ -566,6 +568,96 @@ impl<M: MainUi + 'static> App<M> {
         }
 
         Ok(())
+    }
+
+    /// Process a single AppEvent.
+    ///
+    /// Returns true if a redraw is needed.
+    fn process_app_event(
+        &mut self,
+        event: AppEvent,
+        terminal: &mut Terminal,
+        should_quit: &mut bool,
+    ) -> Result<bool, AppError> {
+        match event {
+            AppEvent::Terminal(event) => {
+                self.dispatch_terminal_event(&event, terminal, should_quit)
+            }
+            AppEvent::TaskMessage(task_message) => {
+                let mut ctx = AppContext::new(
+                    terminal,
+                    &mut self.tab_manager,
+                    &mut self.focus_manager,
+                    &mut self.modal_manager,
+                );
+                let redraw = self.main_ui.handle_task_message(
+                    task_message.task_name,
+                    task_message.payload,
+                    &mut ctx,
+                );
+                *should_quit = ctx.should_quit();
+                Ok(redraw)
+            }
+            AppEvent::Tick => {
+                let mut ctx = AppContext::new(
+                    terminal,
+                    &mut self.tab_manager,
+                    &mut self.focus_manager,
+                    &mut self.modal_manager,
+                );
+                self.main_ui.tick(&mut ctx);
+                *should_quit = ctx.should_quit();
+                Ok(true)
+            }
+        }
+    }
+
+    /// Dispatch a terminal event through the component hierarchy.
+    fn dispatch_terminal_event(
+        &mut self,
+        event: &Event,
+        terminal: &mut Terminal,
+        should_quit: &mut bool,
+    ) -> Result<bool, AppError> {
+        // Check for dev console toggle first (` key)
+        if self.dev_console_enabled
+            && matches!(event, Event::Key(key) if key.code == KeyCode::Char('`'))
+        {
+            self.dev_console.toggle();
+            return Ok(true);
+        }
+
+        // Three-phase event dispatch:
+        //
+        // Phase 0: Modal handles the event first (if open)
+        let modal_consumed = self.modal_manager.handle_event(event);
+
+        // Phase 1: MainUi handles the event
+        let main_result = {
+            let mut ctx = AppContext::new(
+                terminal,
+                &mut self.tab_manager,
+                &mut self.focus_manager,
+                &mut self.modal_manager,
+            );
+            let result = if modal_consumed {
+                self.main_ui.handle_event(event, &mut ctx);
+                crate::focus::EventResult::StopPropagation
+            } else {
+                self.main_ui.handle_event(event, &mut ctx)
+            };
+            *should_quit = ctx.should_quit();
+            result
+        };
+
+        // Phase 2: If MainUi didn't handle it, delegate to active tab
+        if main_result.should_propagate() && !*should_quit {
+            let mut tab_ctx = TabEventContext::new(terminal, &mut self.focus_manager);
+            self.tab_manager.handle_event(event, &mut tab_ctx);
+            *should_quit = *should_quit || tab_ctx.should_quit();
+        }
+
+        Ok(true)
     }
 
     /// Draw the UI.

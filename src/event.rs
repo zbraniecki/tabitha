@@ -6,6 +6,8 @@ pub use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 
+use crate::bus::TaskMessage;
+
 /// Unified event type for the TUI framework.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -84,5 +86,31 @@ impl From<CrosstermEvent> for Event {
             CrosstermEvent::FocusLost => Event::FocusLost,
             CrosstermEvent::Paste(text) => Event::Paste(text),
         }
+    }
+}
+
+/// Unified event type for the entire application system.
+///
+/// This enum consolidates all event sources into a single type,
+/// enabling structured concurrency and unified event handling.
+#[derive(Debug)]
+pub enum AppEvent {
+    /// Terminal input events (keyboard, mouse, resize)
+    Terminal(Event),
+    /// Messages from background tasks
+    TaskMessage(TaskMessage),
+    /// Timer/animation tick event
+    Tick,
+}
+
+impl From<Event> for AppEvent {
+    fn from(event: Event) -> Self {
+        AppEvent::Terminal(event)
+    }
+}
+
+impl From<TaskMessage> for AppEvent {
+    fn from(msg: TaskMessage) -> Self {
+        AppEvent::TaskMessage(msg)
     }
 }

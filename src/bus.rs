@@ -17,6 +17,7 @@ pub const DEFAULT_CHANNEL_SIZE: NonZeroUsize = match NonZeroUsize::new(32) {
 };
 
 /// A type-erased message that can be sent through the bus.
+#[derive(Debug)]
 pub struct TaskMessage {
     /// The name of the task that sent this message.
     pub task_name: &'static str,

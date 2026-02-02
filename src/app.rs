@@ -28,57 +28,14 @@ pub enum AppError {
     #[error("Terminal error: {0}")]
     Terminal(#[from] TerminalError),
     /// Build error.
-    Build(BuildError),
+    #[error("Build error: {0}")]
+    Build(#[from] BuildError),
     /// Runtime error.
-    Runtime(RuntimeError),
+    #[error("Runtime error: {0}")]
+    Runtime(#[from] RuntimeError),
     /// IO error.
-    Io(std::io::Error),
-}
-
-impl std::fmt::Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AppError::Terminal(e) => write!(f, "Terminal error: {}", e),
-            AppError::Build(e) => write!(f, "Build error: {}", e),
-            AppError::Runtime(e) => write!(f, "Runtime error: {}", e),
-            AppError::Io(e) => write!(f, "IO error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for AppError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            AppError::Terminal(e) => Some(e),
-            AppError::Build(e) => Some(e),
-            AppError::Runtime(e) => Some(e),
-            AppError::Io(e) => Some(e),
-        }
-    }
-}
-
-impl From<TerminalError> for AppError {
-    fn from(err: TerminalError) -> Self {
-        AppError::Terminal(err)
-    }
-}
-
-impl From<BuildError> for AppError {
-    fn from(err: BuildError) -> Self {
-        AppError::Build(err)
-    }
-}
-
-impl From<RuntimeError> for AppError {
-    fn from(err: RuntimeError) -> Self {
-        AppError::Runtime(err)
-    }
-}
-
-impl From<std::io::Error> for AppError {
-    fn from(err: std::io::Error) -> Self {
-        AppError::Io(err)
-    }
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Error type for building an application.
@@ -92,38 +49,16 @@ pub enum BuildError {
     DuplicateTask(&'static str),
 }
 
-impl std::fmt::Display for BuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BuildError::NoMainUi => write!(f, "No main UI provided"),
-            BuildError::DuplicateTask(name) => write!(f, "Duplicate task: {}", name),
-        }
-    }
-}
-
-impl std::error::Error for BuildError {}
-
 /// Error type for runtime application errors.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
     /// The message bus receiver was already taken.
+    #[error("message bus receiver already taken")]
     ReceiverAlreadyTaken,
     /// A background task failed to spawn.
+    #[error("failed to spawn task '{0}': {1}")]
     TaskSpawnFailed(&'static str, std::io::Error),
 }
-
-impl std::fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RuntimeError::ReceiverAlreadyTaken => write!(f, "message bus receiver already taken"),
-            RuntimeError::TaskSpawnFailed(name, e) => {
-                write!(f, "failed to spawn task '{}': {}", name, e)
-            }
-        }
-    }
-}
-
-impl std::error::Error for RuntimeError {}
 
 /// A pending task to be spawned when the app runs.
 struct PendingTask {
@@ -418,7 +353,7 @@ impl<M: MainUi + 'static> App<M> {
         let shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         for handle in task_handles {
             let task_name = handle.name;
-            match tokio::time::timeout(shutdown_timeout, handle.join()).await {
+            match tokio::time::timeout_at(shutdown_deadline, handle.join()).await {
                 Ok(Ok(())) => tracing::trace!(task_name, "task completed"),
                 Ok(Err(_)) => tracing::warn!(task_name, "task panicked"),
                 Err(_) => tracing::debug!(task_name, "task shutdown timeout"),

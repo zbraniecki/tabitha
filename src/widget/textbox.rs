@@ -147,6 +147,103 @@ impl TextBoxConfig {
     }
 }
 
+/// Builder for constructing a TextBox with complex configuration.
+///
+/// This provides a cleaner API for building TextBox widgets with multiple
+/// configuration options. Use [TextBox::builder] to create a builder.
+///
+/// # Example
+///
+/// ```ignore
+/// let textbox = TextBox::builder("username")
+///     .placeholder("Enter username...")
+///     .title("Username")
+///     .max_length(20)
+///     .config(TextBoxConfig::from_theme(&theme))
+///     .build();
+/// ```
+pub struct TextBoxBuilder {
+    id: String,
+    text: Option<String>,
+    placeholder: Option<String>,
+    title: Option<String>,
+    config: TextBoxConfig,
+}
+
+impl TextBoxBuilder {
+    /// Create a new TextBoxBuilder with the given focus ID.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            text: None,
+            placeholder: None,
+            title: None,
+            config: TextBoxConfig::default(),
+        }
+    }
+
+    /// Set the placeholder text.
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = Some(placeholder.into());
+        self
+    }
+
+    /// Set the border title.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the configuration.
+    pub fn config(mut self, config: TextBoxConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Set initial text content.
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+
+    /// Set the password mask character.
+    pub fn password_mask(mut self, mask: char) -> Self {
+        self.config.password_mask = Some(mask);
+        self
+    }
+
+    /// Set the maximum input length.
+    pub fn max_length(mut self, max: usize) -> Self {
+        self.config.max_length = Some(max);
+        self
+    }
+
+    /// Set the cursor blink configuration.
+    pub fn cursor_blink(mut self, config: CursorBlinkConfig) -> Self {
+        self.config.cursor_blink = config;
+        self
+    }
+
+    /// Build the TextBox.
+    pub fn build(self) -> TextBox {
+        let text = self.text.unwrap_or_default();
+        let cursor_pos = text.chars().count();
+
+        TextBox {
+            id: self.id,
+            text,
+            cursor_pos,
+            placeholder: self.placeholder,
+            title: self.title,
+            config: self.config,
+            cursor_visible: true,
+            last_blink: None,
+            events: Vec::new(),
+            scroll_offset: Cell::new(0),
+        }
+    }
+}
+
 /// A single-line text input widget.
 #[derive(Clone)]
 pub struct TextBox {
@@ -174,6 +271,8 @@ pub struct TextBox {
 
 impl TextBox {
     /// Create a new TextBox with the given focus ID.
+    ///
+    /// For more complex configuration, use [TextBox::builder] instead.
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -187,6 +286,21 @@ impl TextBox {
             events: Vec::new(),
             scroll_offset: Cell::new(0),
         }
+    }
+
+    /// Create a new TextBoxBuilder for complex configuration.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let textbox = TextBox::builder("username")
+    ///     .placeholder("Enter username...")
+    ///     .title("Username")
+    ///     .max_length(20)
+    ///     .build();
+    /// ```
+    pub fn builder(id: impl Into<String>) -> TextBoxBuilder {
+        TextBoxBuilder::new(id)
     }
 
     /// Set the placeholder text.

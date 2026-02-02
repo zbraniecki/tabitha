@@ -22,10 +22,11 @@ use crate::theme::Theme;
 use crate::widget::{DevConsole, ModalManager};
 
 /// Error type for application operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AppError {
     /// Terminal error.
-    Terminal(TerminalError),
+    #[error("Terminal error: {0}")]
+    Terminal(#[from] TerminalError),
     /// Build error.
     Build(BuildError),
     /// Runtime error.
@@ -81,11 +82,13 @@ impl From<std::io::Error> for AppError {
 }
 
 /// Error type for building an application.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum BuildError {
     /// No main UI was provided.
+    #[error("No main UI provided")]
     NoMainUi,
     /// A task with the same name was already added.
+    #[error("Duplicate task: {0}")]
     DuplicateTask(&'static str),
 }
 
@@ -411,8 +414,8 @@ impl<M: MainUi + 'static> App<M> {
         tracing::trace!("sending cancellation signal");
         let _ = cancel_tx.send(true);
 
-        // Wait for tasks to finish (with timeout)
-        let shutdown_timeout = Duration::from_secs(2);
+        // Wait for tasks to finish (with shared timeout deadline to avoid accumulation)
+        let shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         for handle in task_handles {
             let task_name = handle.name;
             match tokio::time::timeout(shutdown_timeout, handle.join()).await {

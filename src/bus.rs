@@ -5,12 +5,16 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
 use thiserror::Error;
 use tokio::sync::mpsc;
 
 /// Default channel buffer size for task messages.
-pub const DEFAULT_CHANNEL_SIZE: usize = 32;
+pub const DEFAULT_CHANNEL_SIZE: NonZeroUsize = match NonZeroUsize::new(32) {
+    Some(n) => n,
+    None => unreachable!(),
+};
 
 /// A type-erased message that can be sent through the bus.
 pub struct TaskMessage {
@@ -95,7 +99,7 @@ pub struct MessageBus {
 impl MessageBus {
     /// Create a new empty message bus.
     pub fn new() -> Self {
-        let (unified_tx, unified_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE * 4);
+        let (unified_tx, unified_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE.get() * 4);
         Self {
             registered_tasks: HashMap::new(),
             unified_tx,

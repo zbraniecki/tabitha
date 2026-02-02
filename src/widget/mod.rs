@@ -58,7 +58,7 @@ pub use datatable::{
 };
 pub use dev_console::{DevConsole, LogLine};
 pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult};
-pub use textbox::{TextBox, TextBoxConfig, TextBoxEvent};
+pub use textbox::{TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};
 
 use ratatui::{layout::Rect, Frame};
 

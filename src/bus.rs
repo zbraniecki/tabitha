@@ -16,6 +16,9 @@ pub const DEFAULT_CHANNEL_SIZE: NonZeroUsize = match NonZeroUsize::new(32) {
     None => unreachable!(),
 };
 
+/// Multiplier for the unified channel buffer size (DEFAULT_CHANNEL_SIZE * MULTIPLIER).
+const UNIFIED_CHANNEL_MULTIPLIER: usize = 4;
+
 /// A type-erased message that can be sent through the bus.
 #[derive(Debug)]
 pub struct TaskMessage {
@@ -100,7 +103,8 @@ pub struct MessageBus {
 impl MessageBus {
     /// Create a new empty message bus.
     pub fn new() -> Self {
-        let (unified_tx, unified_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE.get() * 4);
+        let (unified_tx, unified_rx) =
+            mpsc::channel(DEFAULT_CHANNEL_SIZE.get() * UNIFIED_CHANNEL_MULTIPLIER);
         Self {
             registered_tasks: HashMap::new(),
             unified_tx,

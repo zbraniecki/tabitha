@@ -21,6 +21,12 @@ use crate::terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalErro
 use crate::theme::Theme;
 use crate::widget::{DevConsole, ModalManager};
 
+/// Default buffer size for the event channel.
+const EVENT_CHANNEL_SIZE: usize = 256;
+
+/// Default timeout for task shutdown in seconds.
+const SHUTDOWN_TIMEOUT_SECONDS: u64 = 2;
+
 /// Error type for application operations.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -352,7 +358,7 @@ impl<M: MainUi + 'static> App<M> {
         tracing::trace!(task_count = task_handles.len(), "all tasks spawned");
 
         // Create unified event channel for structured concurrency
-        let (event_tx, event_rx) = mpsc::channel(256);
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
 
         // Initial draw before starting event loop
         self.draw(&mut terminal)?;
@@ -367,7 +373,8 @@ impl<M: MainUi + 'static> App<M> {
         let _ = cancel_tx.send(true);
 
         // Wait for tasks to finish (with shared timeout deadline to avoid accumulation)
-        let shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let shutdown_deadline =
+            tokio::time::Instant::now() + Duration::from_secs(SHUTDOWN_TIMEOUT_SECONDS);
         for handle in task_handles {
             let task_name = handle.name;
             match tokio::time::timeout_at(shutdown_deadline, handle.join()).await {

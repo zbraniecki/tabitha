@@ -3,13 +3,13 @@
 //! This example shows:
 //! - Implementing the Tab trait for custom tabs
 //! - Registering tabs with the application
-//! - Drawing tab bar and content using DrawContext
+//! - Drawing tab bar and content using the new TabBar and TabContent widgets
 //! - Navigating tabs using AppContext
 //! - Enabling/disabling tabs at runtime
 //!
 //! Controls:
-//! - Tab/Shift+Tab: Navigate between tabs
-//! - 1-3: Select specific tabs
+//! - Alt+Tab/Alt+Shift+Tab: Navigate between tabs
+//! - Alt+1-3: Select specific tabs
 //! - d: Toggle disable on the Settings tab
 //! - q/Ctrl+C: Quit
 
@@ -26,8 +26,11 @@ use ratatui::{
 };
 use tabitha::{
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasTabs, KeyCode,
-    KeyModifiers, MainUi, Tab,
+    MainUi, Tab,
 };
+
+// Import the new widgets
+use tabitha::widget::{TabBar, TabContent};
 
 // =============================================================================
 // Tabs
@@ -49,9 +52,10 @@ impl Tab for HomeTab {
         let content = Paragraph::new(
             "Welcome to the Tabs Example!\n\n\
              This is the Home tab.\n\n\
-             Use Tab/Shift+Tab to navigate between tabs.\n\
-             Press 1, 2, or 3 to jump to specific tabs.\n\
-             Press 'd' to toggle the Settings tab enabled/disabled.",
+             Use Tab/Shift+Tab or Ctrl+Tab/Ctrl+Shift+Tab to navigate between tabs.\n\
+             Press Alt+1, Alt+2, or Alt+3 to jump to specific tabs.\n\
+             Press 'd' to toggle the Settings tab enabled/disabled.\n\n\
+             This example demonstrates the new 'context as state, widget as view' pattern.",
         )
         .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
@@ -82,7 +86,9 @@ impl Tab for DashboardTab {
         let content = Paragraph::new(format!(
             "Dashboard Statistics\n\n\
              View count: {}\n\n\
-             This counter increments each time you switch to this tab.",
+             This counter increments each time you switch to this tab.\n\n\
+             The new TabBar and TabContent widgets provide a clean separation\n\
+             between state (in context) and view (in widgets).",
             self.view_count
         ))
         .style(Style::default().fg(Color::White));
@@ -117,7 +123,8 @@ impl Tab for SettingsTab {
             "Settings Panel\n\n\
              This tab can be disabled.\n\
              Press 'd' to toggle this tab's enabled state.\n\n\
-             When disabled, you cannot navigate to this tab.",
+             When disabled, you cannot navigate to this tab.\n\n\
+             The TabBar widget automatically grays out disabled tabs.",
         )
         .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
@@ -148,21 +155,15 @@ impl Component for TabsApp {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Tab bar with border
+                Constraint::Length(1), // Tab bar (compact)
                 Constraint::Min(5),    // Tab content with border
                 Constraint::Length(3), // Footer
             ])
             .split(area);
 
-        // Draw border around tabbar
-        let tabbar_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-        let tabbar_inner = tabbar_block.inner(chunks[0]);
-        frame.render_widget(tabbar_block, chunks[0]);
-
-        // Draw tab bar
-        ctx.tabs().draw_tabbar(frame, tabbar_inner);
+        // Draw tab bar using the new TabBar widget
+        // User controls where the tab bar is rendered
+        TabBar::draw(frame, chunks[0], ctx);
 
         // Draw border around content area
         let content_block = Block::default()
@@ -171,8 +172,9 @@ impl Component for TabsApp {
         let content_inner = content_block.inner(chunks[1]);
         frame.render_widget(content_block, chunks[1]);
 
-        // Draw active tab content
-        ctx.tabs().draw_content(frame, content_inner);
+        // Draw active tab content using the new TabContent widget
+        // User controls where the content is rendered
+        TabContent::draw(frame, content_inner, ctx);
 
         // Footer with controls
         let settings_status = if self.settings_enabled {
@@ -181,7 +183,7 @@ impl Component for TabsApp {
             "disabled"
         };
         let footer_text = format!(
-            "Tab/Shift+Tab: Navigate | 1-3: Jump to tab | d: Toggle settings ({}) | q: Quit",
+            "Alt+Tab/Alt+Shift+Tab: Navigate | Alt+1-3: Jump | d: Toggle settings ({}) | q: Quit",
             settings_status
         );
         let footer = Paragraph::new(footer_text)
@@ -197,36 +199,16 @@ impl Component for TabsApp {
             return EventResult::Handled;
         }
 
+        // Let TabBar handle its standard navigation events first
+        // This handles Ctrl+Tab, Ctrl+Shift+Tab, and Alt+1-9
+        if TabBar::handle_event(event, ctx).is_handled() {
+            return EventResult::Handled;
+        }
+
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Char('q') => {
                     ctx.quit();
-                    EventResult::Handled
-                }
-                // Tab navigation
-                KeyCode::Tab => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        ctx.tabs().select_prev();
-                    } else {
-                        ctx.tabs().select_next();
-                    }
-                    EventResult::Handled
-                }
-                KeyCode::BackTab => {
-                    ctx.tabs().select_prev();
-                    EventResult::Handled
-                }
-                // Direct tab selection
-                KeyCode::Char('1') => {
-                    ctx.tabs().select(0);
-                    EventResult::Handled
-                }
-                KeyCode::Char('2') => {
-                    ctx.tabs().select(1);
-                    EventResult::Handled
-                }
-                KeyCode::Char('3') => {
-                    ctx.tabs().select(2);
                     EventResult::Handled
                 }
                 // Toggle settings tab enabled/disabled

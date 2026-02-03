@@ -137,7 +137,8 @@ pub use widget::{
     BoxedControl, Column, ColumnAlign, ColumnType, ColumnWidth, Control, ControlEvent, ControlExt,
     CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, DevConsole, LogLine, Modal,
     ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult, SelectionMode, SimpleRow,
-    SortDirection, SortState, TableRow, TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent,
+    SortDirection, SortState, TabBar, TabContent, TableRow, TextBox, TextBoxBuilder, TextBoxConfig,
+    TextBoxEvent,
 };
 
 // Re-export ratatui types that users commonly need

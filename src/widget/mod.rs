@@ -50,6 +50,8 @@
 mod datatable;
 mod dev_console;
 mod modal;
+mod tab_bar;
+mod tab_content;
 mod textbox;
 
 pub use datatable::{
@@ -58,6 +60,8 @@ pub use datatable::{
 };
 pub use dev_console::{DevConsole, LogLine};
 pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult};
+pub use tab_bar::TabBar;
+pub use tab_content::TabContent;
 pub use textbox::{TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};
 
 use ratatui::{layout::Rect, Frame};

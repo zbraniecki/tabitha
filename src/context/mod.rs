@@ -8,7 +8,8 @@ pub mod traits;
 
 use ratatui::{layout::Rect, Frame};
 
-use crate::focus::FocusManager;
+use crate::event::Event;
+use crate::focus::{EventResult, FocusManager};
 use crate::tabs::{TabInfo, TabManager};
 use crate::task::{BlockingHandle, CongestionController};
 use crate::task_manager::{TaskManager, TaskManagerContext};
@@ -535,6 +536,22 @@ impl TabsEventContext<'_> {
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
         self.manager.set_enabled(id, enabled)
     }
+
+    /// Select a tab by index.
+    ///
+    /// Returns `true` if the tab was selected, `false` if the index is invalid
+    /// or the tab is disabled.
+    pub fn select_by_index(&mut self, index: usize) -> bool {
+        self.manager.select(index)
+    }
+
+    /// Forward an event to the active tab.
+    ///
+    /// This allows the TabContent widget to delegate events to the active tab.
+    /// Returns `EventResult::Unhandled` if there is no active tab.
+    pub fn forward_event(&mut self, event: &Event, ctx: &mut TabEventContext) -> EventResult {
+        self.manager.handle_event(event, ctx)
+    }
 }
 
 /// Context passed to draw methods for rendering.
@@ -699,6 +716,20 @@ impl TabsDrawContext<'_> {
     ///
     /// This calls the active tab's `draw` method with the given area.
     pub fn draw_content(&self, frame: &mut Frame, area: Rect) {
+        self.manager.draw_content(frame, area);
+    }
+
+    /// Iterate over tab metadata.
+    ///
+    /// Returns an iterator over `TabInfo` for all registered tabs.
+    pub fn iter(&self) -> impl Iterator<Item = TabInfo> + '_ {
+        self.manager.list().into_iter()
+    }
+
+    /// Draw the active tab's content.
+    ///
+    /// This is an alias for `draw_content` for API consistency with the new widget pattern.
+    pub fn draw_active(&self, frame: &mut Frame, area: Rect) {
         self.manager.draw_content(frame, area);
     }
 }

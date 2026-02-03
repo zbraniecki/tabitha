@@ -13,6 +13,7 @@ use tokio::sync::watch;
 
 use crate::bus::{MessageBus, MessageBusReceiver, TaskMessage, TaskSender};
 use crate::component::MainUi;
+use crate::context::traits::CanQuit;
 use crate::context::{AppContext, DrawContext, TabEventContext};
 use crate::event::{AppEvent, Event, KeyCode};
 use crate::focus::FocusManager;

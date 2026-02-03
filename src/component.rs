@@ -4,6 +4,7 @@
 
 use ratatui::{layout::Rect, Frame};
 
+use crate::context::traits::HasFocus;
 use crate::context::{AppContext, DrawContext};
 use crate::event::Event;
 use crate::focus::EventResult;

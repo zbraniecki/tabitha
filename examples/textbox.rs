@@ -34,7 +34,8 @@ use ratatui::{
 };
 use tabitha::{
     widget::{Control, TextBox, TextBoxConfig, TextBoxEvent},
-    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, MainUi,
+    AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasFocus, KeyCode,
+    MainUi,
 };
 
 // =============================================================================

@@ -113,6 +113,7 @@ pub use app::{App, AppBuilder, AppError, BuildError};
 pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};
 pub use component::{BoxedComponent, Component, ComponentExt, MainUi};
 pub use context::{
+    traits::{CanQuit, CanSpawnBlocking, HasFocus, HasModal, HasTabs, HasTaskManager, HasTerminal},
     AppContext, DrawContext, FocusDrawContext, FocusEventContext, ModalEventContext,
     TabEventContext, TabsDrawContext, TabsEventContext,
 };

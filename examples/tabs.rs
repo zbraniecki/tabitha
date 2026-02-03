@@ -25,8 +25,8 @@ use ratatui::{
     Frame,
 };
 use tabitha::{
-    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, KeyModifiers,
-    MainUi, Tab,
+    AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasTabs, KeyCode,
+    KeyModifiers, MainUi, Tab,
 };
 
 // =============================================================================

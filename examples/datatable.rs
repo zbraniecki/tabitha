@@ -30,9 +30,9 @@ use ratatui::{
     Frame,
 };
 use tabitha::{
-    AppBuilder, AppContext, Column, ColumnAlign, ColumnType, ColumnWidth, Component, Control,
-    DataTable, DataTableConfig, DataTableEvent, DrawContext, Event, EventResult, KeyCode, MainUi,
-    SelectionMode, SimpleRow, TextBox, TextBoxConfig, TextBoxEvent,
+    AppBuilder, AppContext, CanQuit, Column, ColumnAlign, ColumnType, ColumnWidth, Component,
+    Control, DataTable, DataTableConfig, DataTableEvent, DrawContext, Event, EventResult, KeyCode,
+    MainUi, SelectionMode, SimpleRow, TextBox, TextBoxConfig, TextBoxEvent,
 };
 
 // =============================================================================

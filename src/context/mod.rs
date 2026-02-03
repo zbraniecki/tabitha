@@ -4,6 +4,8 @@
 //! and draw methods, allowing components to control application behavior
 //! and access shared state.
 
+pub mod traits;
+
 use ratatui::{layout::Rect, Frame};
 
 use crate::focus::FocusManager;
@@ -13,6 +15,9 @@ use crate::task_manager::{TaskManager, TaskManagerContext};
 use crate::terminal::{Terminal, TerminalError};
 use crate::theme::Theme;
 use crate::widget::{Modal, ModalManager, ModalResult};
+
+// Import traits
+pub use self::traits::*;
 
 // =============================================================================
 // TabEventContext - Context for Tab event handlers (no TabManager access)
@@ -44,41 +49,37 @@ impl<'a> TabEventContext<'a> {
             should_quit: false,
         }
     }
+}
 
-    /// Request the application to quit.
-    #[inline]
-    pub fn quit(&mut self) {
-        self.should_quit = true;
-    }
-
-    /// Check if quit has been requested.
-    #[inline]
-    pub fn should_quit(&self) -> bool {
-        self.should_quit
-    }
-
-    /// Check if mouse capture is currently enabled.
-    #[inline]
-    pub fn mouse_capture_enabled(&self) -> bool {
-        self.terminal.mouse_capture_enabled()
-    }
-
-    /// Enable or disable mouse capture at runtime.
-    pub fn set_mouse_capture(&mut self, enabled: bool) -> Result<(), TerminalError> {
-        self.terminal.set_mouse_capture(enabled)
-    }
-
-    /// Get the terminal size.
-    pub fn terminal_size(&self) -> Result<Rect, TerminalError> {
-        self.terminal.size()
-    }
-
-    /// Access focus controls for event handling.
-    #[inline]
-    pub fn focus(&mut self) -> FocusEventContext<'_> {
+impl HasFocus for TabEventContext<'_> {
+    fn focus(&mut self) -> FocusEventContext<'_> {
         FocusEventContext {
             manager: self.focus_manager,
         }
+    }
+}
+
+impl HasTerminal for TabEventContext<'_> {
+    fn mouse_capture_enabled(&self) -> bool {
+        self.terminal.mouse_capture_enabled()
+    }
+
+    fn set_mouse_capture(&mut self, enabled: bool) -> Result<(), TerminalError> {
+        self.terminal.set_mouse_capture(enabled)
+    }
+
+    fn terminal_size(&self) -> Result<Rect, TerminalError> {
+        self.terminal.size()
+    }
+}
+
+impl CanQuit for TabEventContext<'_> {
+    fn quit(&mut self) {
+        self.should_quit = true;
+    }
+
+    fn should_quit(&self) -> bool {
+        self.should_quit
     }
 }
 
@@ -169,204 +170,74 @@ impl<'a> AppContext<'a> {
             should_quit: false,
         }
     }
+}
 
-    /// Request the application to quit.
-    ///
-    /// The application will exit gracefully after the current event
-    /// is processed.
-    #[inline]
-    pub fn quit(&mut self) {
-        self.should_quit = true;
-    }
-
-    /// Check if quit has been requested.
-    #[inline]
-    pub fn should_quit(&self) -> bool {
-        self.should_quit
-    }
-
-    /// Check if mouse capture is currently enabled.
-    #[inline]
-    pub fn mouse_capture_enabled(&self) -> bool {
-        self.terminal.mouse_capture_enabled()
-    }
-
-    /// Enable or disable mouse capture at runtime.
-    ///
-    /// Returns an error if the terminal operation fails.
-    pub fn set_mouse_capture(&mut self, enabled: bool) -> Result<(), TerminalError> {
-        self.terminal.set_mouse_capture(enabled)
-    }
-
-    /// Get the terminal size.
-    pub fn terminal_size(&self) -> Result<Rect, TerminalError> {
-        self.terminal.size()
-    }
-
-    /// Access tab controls for event handling.
-    ///
-    /// Use this to select tabs, navigate between tabs, etc.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Select next tab
-    /// ctx.tabs().select_next();
-    ///
-    /// // Select a specific tab by ID
-    /// ctx.tabs().select_by_id("settings");
-    ///
-    /// // Select previous tab
-    /// ctx.tabs().select_prev();
-    /// ```
-    #[inline]
-    pub fn tabs(&mut self) -> TabsEventContext<'_> {
-        TabsEventContext {
-            manager: self.tab_manager,
-        }
-    }
-
-    /// Access focus controls for event handling.
-    ///
-    /// Use this to navigate focus, check focused state, etc.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Move focus to next element
-    /// ctx.focus().focus_next();
-    ///
-    /// // Set focus to a specific element
-    /// ctx.focus().set_focus("my_widget");
-    ///
-    /// // Check what's focused
-    /// if let Some(id) = ctx.focus().focused_id() {
-    ///     println!("Focused: {}", id);
-    /// }
-    /// ```
-    #[inline]
-    pub fn focus(&mut self) -> FocusEventContext<'_> {
+impl HasFocus for AppContext<'_> {
+    fn focus(&mut self) -> FocusEventContext<'_> {
         FocusEventContext {
             manager: self.focus_manager,
         }
     }
+}
 
-    /// Access modal controls for event handling.
-    ///
-    /// Use this to open modals and check results.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use tabitha::{Modal, ModalButton, ModalResult};
-    ///
-    /// // Open a modal
-    /// ctx.modal().open(
-    ///     Modal::new("confirm", "Are you sure?")
-    ///         .with_title("Confirm")
-    ///         .with_button(ModalButton::new("yes", "Yes"))
-    ///         .with_button(ModalButton::new("no", "No"))
-    /// );
-    ///
-    /// // Check for results from closed modals
-    /// if let Some((modal_id, result)) = ctx.modal().take_result() {
-    ///     match (modal_id.as_str(), result) {
-    ///         ("confirm", ModalResult::ButtonPressed(id)) if id == "yes" => {
-    ///             // Handle confirmation
-    ///         }
-    ///         _ => {}
-    ///     }
-    /// }
-    /// ```
-    #[inline]
-    pub fn modal(&mut self) -> ModalEventContext<'_> {
+impl HasTabs for AppContext<'_> {
+    fn tabs(&mut self) -> TabsEventContext<'_> {
+        TabsEventContext {
+            manager: self.tab_manager,
+        }
+    }
+}
+
+impl HasTerminal for AppContext<'_> {
+    fn mouse_capture_enabled(&self) -> bool {
+        self.terminal.mouse_capture_enabled()
+    }
+
+    fn set_mouse_capture(&mut self, enabled: bool) -> Result<(), TerminalError> {
+        self.terminal.set_mouse_capture(enabled)
+    }
+
+    fn terminal_size(&self) -> Result<Rect, TerminalError> {
+        self.terminal.size()
+    }
+}
+
+impl CanQuit for AppContext<'_> {
+    fn quit(&mut self) {
+        self.should_quit = true;
+    }
+
+    fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+}
+
+impl HasModal for AppContext<'_> {
+    fn modal(&mut self) -> ModalEventContext<'_> {
         ModalEventContext {
             manager: self.modal_manager,
         }
     }
+}
 
-    /// Access the task manager for runtime task spawning.
-    ///
-    /// Returns `Some(TaskManagerContext)` if the task manager is available,
-    /// `None` otherwise. The task manager is only available during event
-    /// handling when the application is running.
-    ///
-    /// Use this to spawn, monitor, and abort background tasks dynamically
-    /// at runtime.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
-    ///     if let Some(mut task_ctx) = ctx.task_manager() {
-    ///         // Spawn a new task
-    ///         if !task_ctx.is_running("worker") {
-    ///             if let Err(e) = task_ctx.spawn("worker", WorkerTask::new()) {
-    ///                 tracing::error!("Failed to spawn worker: {}", e);
-    ///             }
-    ///         }
-    ///         
-    ///         // List running tasks
-    ///         for name in task_ctx.list_tasks() {
-    ///             tracing::info!("Running task: {}", name);
-    ///         }
-    ///         
-    ///         // Abort a task
-    ///         if task_ctx.abort("worker") {
-    ///             tracing::info!("Worker aborted");
-    ///         }
-    ///     }
-    ///     EventResult::Unhandled
-    /// }
-    /// ```
-    #[inline]
-    pub fn task_manager(&mut self) -> Option<TaskManagerContext<'_>> {
-        self.task_manager
-            .as_mut()
-            .map(|tm| TaskManagerContext::new(tm))
+impl HasTaskManager for AppContext<'_> {
+    fn task_manager(&mut self) -> TaskManagerContext<'_> {
+        // This will panic if task_manager is None, which maintains backward compatibility
+        // with existing code that called ctx.task_manager().unwrap()
+        TaskManagerContext::new(
+            self.task_manager
+                .as_mut()
+                .expect("task manager not available"),
+        )
     }
 
-    /// Spawn a blocking operation on the tokio blocking thread pool.
-    ///
-    /// This method is useful for CPU-intensive or blocking I/O operations
-    /// that would otherwise block the async runtime. The task runs on a
-    /// dedicated thread pool managed by tokio.
-    ///
-    /// Returns a `BlockingHandle<T>` that can be used to await the result
-    /// or abort the task.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `F` - The function type to execute
-    /// * `T` - The return type of the function
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - The function to execute on the blocking thread pool
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use tabitha::AppContext;
-    ///
-    /// fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
-    ///     // Spawn a CPU-intensive computation
-    ///     let handle = ctx.spawn_blocking(|| {
-    ///         // This runs on a dedicated thread
-    ///         let mut sum = 0u64;
-    ///         for i in 1..1_000_000 {
-    ///             sum += i;
-    ///         }
-    ///         sum
-    ///     });
-    ///
-    ///     // Store the handle to await later
-    ///     self.computation = Some(handle);
-    ///     
-    ///     EventResult::Unhandled
-    /// }
-    /// ```
-    pub fn spawn_blocking<F, T>(&self, f: F) -> BlockingHandle<T>
+    fn congestion(&self) -> Option<&CongestionController> {
+        self.task_manager.as_ref().map(|tm| tm.congestion())
+    }
+}
+
+impl CanSpawnBlocking for AppContext<'_> {
+    fn spawn_blocking<F, T>(&self, f: F) -> BlockingHandle<T>
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
@@ -375,32 +246,11 @@ impl<'a> AppContext<'a> {
         let handle = tokio::task::spawn_blocking(f);
         BlockingHandle::new(handle)
     }
-
-    /// Get a reference to the congestion controller if available.
-    ///
-    /// Returns `Some(&CongestionController)` if the task manager is available,
-    /// `None` otherwise. Use this to check backpressure state.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
-    ///     if let Some(congestion) = ctx.congestion() {
-    ///         if congestion.is_congested() {
-    ///             tracing::warn!("System is experiencing congestion");
-    ///         }
-    ///     }
-    ///     EventResult::Unhandled
-    /// }
-    /// ```
-    pub fn congestion(&self) -> Option<&CongestionController> {
-        self.task_manager.as_ref().map(|tm| tm.congestion())
-    }
 }
 
 /// Focus controls available during event handling.
 ///
-/// Access this through `AppContext::focus()`.
+/// Access this through `AppContext::focus()` or `TabEventContext::focus()`.
 pub struct FocusEventContext<'a> {
     manager: &'a mut FocusManager,
 }

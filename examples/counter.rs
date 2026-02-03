@@ -21,8 +21,8 @@ use ratatui::{
     Frame,
 };
 use tabitha::{
-    AppBuilder, AppContext, Component, DrawContext, Event, EventResult, KeyCode, MainUi, Task,
-    TaskContext, TaskSender,
+    AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasTerminal,
+    KeyCode, MainUi, Task, TaskContext, TaskSender,
 };
 
 // =============================================================================

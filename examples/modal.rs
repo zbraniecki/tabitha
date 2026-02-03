@@ -35,8 +35,8 @@ use ratatui::{
 };
 
 use tabitha::{
-    AppBuilder, AppContext, Component, Control, DrawContext, Event, EventResult, KeyCode, MainUi,
-    Modal, ModalButton, ModalResult, TextBox, TextBoxConfig,
+    AppBuilder, AppContext, CanQuit, Component, Control, DrawContext, Event, EventResult, HasFocus,
+    HasModal, KeyCode, MainUi, Modal, ModalButton, ModalResult, TextBox, TextBoxConfig,
 };
 
 /// Main application state.

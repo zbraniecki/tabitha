@@ -12,12 +12,12 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 
 use crate::bus::{MessageBus, MessageBusReceiver, TaskMessage, TaskSender};
-use crate::component::MainUi;
+use crate::component::{Component, MainUi};
 use crate::context::traits::CanQuit;
-use crate::context::{AppContext, DrawContext, TabEventContext};
+use crate::context::{AppContext, DrawContext};
 use crate::event::{AppEvent, Event, KeyCode};
 use crate::focus::FocusManager;
-use crate::tabs::{Tab, TabManager};
+use crate::tabs::TabManager;
 use crate::task::{
     BoxedTaskFuture, CongestionController, Task, TaskContext, TaskFactory, TaskHandle,
 };
@@ -184,12 +184,19 @@ impl<M: MainUi + 'static> AppBuilder<M> {
     /// ```ignore
     /// let app = AppBuilder::new()
     ///     .main_ui(MyApp::new())
-    ///     .add_tab(HomeTab::new())
-    ///     .add_tab(SettingsTab::new())
+    ///     .add_tab("home", "Home", HomeTab::new())
+    ///     .add_tab("settings", "Settings", SettingsTab::new())
     ///     .build()?;
     /// ```
-    pub fn add_tab<T: Tab + 'static>(mut self, tab: T) -> Self {
-        self.tab_manager.add(tab);
+    pub fn add_tab(
+        mut self,
+        id: &'static str,
+        title: impl Into<String>,
+        component: impl Component + 'static,
+    ) -> Self {
+        use crate::tabs::TabInfo;
+        let info = TabInfo::new(id, title);
+        self.tab_manager.add(info, component);
         self
     }
 
@@ -592,14 +599,8 @@ impl<M: MainUi + 'static> App<M> {
 
         // Call on_mount for main_ui before starting the event loop
         {
-            let mut ctx = AppContext::with_task_manager(
-                terminal,
-                &mut self.tab_manager,
-                &mut self.focus_manager,
-                &mut self.modal_manager,
-                task_manager,
-            );
-            self.main_ui.on_mount(&mut ctx);
+            let mut lifecycle_ctx = crate::context::LifecycleContext::new(&mut self.focus_manager);
+            self.main_ui.on_mount(&mut lifecycle_ctx);
         }
 
         loop {
@@ -714,7 +715,7 @@ impl<M: MainUi + 'static> App<M> {
         let modal_consumed = self.modal_manager.handle_event(event);
 
         // Phase 1: MainUi handles the event
-        let main_result = {
+        let _main_result = {
             let mut ctx = AppContext::with_task_manager(
                 terminal,
                 &mut self.tab_manager,
@@ -732,12 +733,9 @@ impl<M: MainUi + 'static> App<M> {
             result
         };
 
-        // Phase 2: If MainUi didn't handle it, delegate to active tab
-        if main_result.should_propagate() && !*should_quit {
-            let mut tab_ctx = TabEventContext::new(terminal, &mut self.focus_manager);
-            self.tab_manager.handle_event(event, &mut tab_ctx);
-            *should_quit = *should_quit || tab_ctx.should_quit();
-        }
+        // Phase 2: If MainUi didn't handle it, events are not propagated further
+        // Tabs now receive events through the MainUi or through TabContent widget
+        // which calls ctx.tabs().forward_event()
 
         Ok(true)
     }

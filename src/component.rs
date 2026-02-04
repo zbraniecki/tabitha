@@ -4,8 +4,7 @@
 
 use ratatui::{layout::Rect, Frame};
 
-use crate::context::traits::HasFocus;
-use crate::context::{AppContext, DrawContext};
+use crate::context::{AppContext, DrawContext, LifecycleContext};
 use crate::event::Event;
 use crate::focus::EventResult;
 
@@ -148,7 +147,7 @@ pub trait Component: Send {
     /// # Example
     ///
     /// ```ignore
-    /// fn on_mount(&mut self, ctx: &mut AppContext) {
+    /// fn on_mount(&mut self, ctx: &mut LifecycleContext) {
     ///     // Register focus children (auto-called by default)
     ///     for id in self.focus_children() {
     ///         ctx.focus().register(id);
@@ -158,7 +157,7 @@ pub trait Component: Send {
     ///     self.load_data();
     /// }
     /// ```
-    fn on_mount(&mut self, ctx: &mut AppContext) {
+    fn on_mount(&mut self, ctx: &mut LifecycleContext) {
         // Auto-register focusable children
         let children = self.focus_children();
         if let Some(first) = children.first() {
@@ -174,7 +173,7 @@ pub trait Component: Send {
     /// Override this to perform cleanup, unregister focusable elements,
     /// or release resources. The default implementation automatically
     /// unregisters all IDs returned by `focus_children()`.
-    fn on_unmount(&mut self, ctx: &mut AppContext) {
+    fn on_unmount(&mut self, ctx: &mut LifecycleContext) {
         // Auto-unregister focusable children
         for id in self.focus_children() {
             ctx.focus().unregister(id);

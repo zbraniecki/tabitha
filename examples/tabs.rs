@@ -1,15 +1,15 @@
 //! Tabs example demonstrating the tab system in tabitha.
 //!
 //! This example shows:
-//! - Implementing the Tab trait for custom tabs
+//! - Implementing components for tabs
 //! - Registering tabs with the application
 //! - Drawing tab bar and content using the new TabBar and TabContent widgets
 //! - Navigating tabs using AppContext
 //! - Enabling/disabling tabs at runtime
 //!
 //! Controls:
-//! - Alt+Tab/Alt+Shift+Tab: Navigate between tabs
-//! - Alt+1-3: Select specific tabs
+//! - Tab/Shift+Tab: Navigate between tabs
+//! - 1-3: Select specific tabs
 //! - d: Toggle disable on the Settings tab
 //! - q/Ctrl+C: Quit
 
@@ -26,7 +26,7 @@ use ratatui::{
 };
 use tabitha::{
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasTabs, KeyCode,
-    MainUi, Tab,
+    LifecycleContext, MainUi,
 };
 
 // Import the new widgets
@@ -39,26 +39,22 @@ use tabitha::widget::{TabBar, TabContent};
 /// Home tab with a welcome message.
 struct HomeTab;
 
-impl Tab for HomeTab {
-    fn id(&self) -> &str {
-        "home"
-    }
-
-    fn title(&self) -> &str {
-        "Home"
-    }
-
-    fn draw(&self, frame: &mut Frame, area: Rect) {
+impl Component for HomeTab {
+    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
         let content = Paragraph::new(
             "Welcome to the Tabs Example!\n\n\
              This is the Home tab.\n\n\
-             Use Tab/Shift+Tab or Ctrl+Tab/Ctrl+Shift+Tab to navigate between tabs.\n\
-             Press Alt+1, Alt+2, or Alt+3 to jump to specific tabs.\n\
+             Use Tab/Shift+Tab to navigate between tabs.\n\
+             Press 1, 2, or 3 to jump to specific tabs.\n\
              Press 'd' to toggle the Settings tab enabled/disabled.\n\n\
              This example demonstrates the new 'context as state, widget as view' pattern.",
         )
         .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
+    }
+
+    fn handle_event(&mut self, _event: &Event, _ctx: &mut AppContext) -> EventResult {
+        EventResult::Unhandled
     }
 }
 
@@ -73,16 +69,8 @@ impl DashboardTab {
     }
 }
 
-impl Tab for DashboardTab {
-    fn id(&self) -> &str {
-        "dashboard"
-    }
-
-    fn title(&self) -> &str {
-        "Dashboard"
-    }
-
-    fn draw(&self, frame: &mut Frame, area: Rect) {
+impl Component for DashboardTab {
+    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
         let content = Paragraph::new(format!(
             "Dashboard Statistics\n\n\
              View count: {}\n\n\
@@ -95,7 +83,12 @@ impl Tab for DashboardTab {
         frame.render_widget(content, area);
     }
 
-    fn on_activate(&mut self) {
+    fn handle_event(&mut self, _event: &Event, _ctx: &mut AppContext) -> EventResult {
+        EventResult::Unhandled
+    }
+
+    fn on_mount(&mut self, _ctx: &mut LifecycleContext) {
+        // Called when tab becomes active
         self.view_count += 1;
     }
 }
@@ -109,16 +102,8 @@ impl SettingsTab {
     }
 }
 
-impl Tab for SettingsTab {
-    fn id(&self) -> &str {
-        "settings"
-    }
-
-    fn title(&self) -> &str {
-        "Settings"
-    }
-
-    fn draw(&self, frame: &mut Frame, area: Rect) {
+impl Component for SettingsTab {
+    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
         let content = Paragraph::new(
             "Settings Panel\n\n\
              This tab can be disabled.\n\
@@ -128,6 +113,10 @@ impl Tab for SettingsTab {
         )
         .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
+    }
+
+    fn handle_event(&mut self, _event: &Event, _ctx: &mut AppContext) -> EventResult {
+        EventResult::Unhandled
     }
 }
 
@@ -183,7 +172,7 @@ impl Component for TabsApp {
             "disabled"
         };
         let footer_text = format!(
-            "Alt+Tab/Alt+Shift+Tab: Navigate | Alt+1-3: Jump | d: Toggle settings ({}) | q: Quit",
+            "Tab/Shift+Tab: Navigate | 1-3: Jump | d: Toggle settings ({}) | q: Quit",
             settings_status
         );
         let footer = Paragraph::new(footer_text)
@@ -200,7 +189,7 @@ impl Component for TabsApp {
         }
 
         // Let TabBar handle its standard navigation events first
-        // This handles Ctrl+Tab, Ctrl+Shift+Tab, and Alt+1-9
+        // This handles Tab, Shift+Tab, and 1-9
         if TabBar::handle_event(event, ctx).is_handled() {
             return EventResult::Handled;
         }
@@ -240,9 +229,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the application with tabs
     let app = AppBuilder::new()
         .main_ui(TabsApp::new())
-        .add_tab(HomeTab)
-        .add_tab(DashboardTab::new())
-        .add_tab(SettingsTab::new())
+        .add_tab("home", "Home", HomeTab)
+        .add_tab("dashboard", "Dashboard", DashboardTab::new())
+        .add_tab("settings", "Settings", SettingsTab::new())
         .mouse_capture(false) // Disable mouse for this example
         .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)

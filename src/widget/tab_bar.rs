@@ -39,7 +39,7 @@ use ratatui::{layout::Rect, text::Line, widgets::Tabs as RatatuiTabs, Frame};
 
 use crate::context::traits::HasTabs;
 use crate::context::{AppContext, DrawContext};
-use crate::event::{Event, KeyCode, KeyModifiers};
+use crate::event::{Event, KeyCode};
 use crate::focus::EventResult;
 
 /// Widget that renders the tab bar. Reads tab state from context.
@@ -82,12 +82,12 @@ impl TabBar {
             .map(|(i, tab)| {
                 let style = if i == tabs.active_index() {
                     theme.highlight_style()
-                } else if !tab.enabled {
+                } else if !tab.is_enabled() {
                     theme.muted_style()
                 } else {
                     theme.fg_style()
                 };
-                Line::from(format!(" {} ", tab.title)).style(style)
+                Line::from(format!(" {} ", tab.title())).style(style)
             })
             .collect();
 
@@ -101,9 +101,9 @@ impl TabBar {
     /// Handle tab bar events.
     ///
     /// Handles standard tab navigation shortcuts:
-    /// - `Alt+Tab`: Select next tab
-    /// - `Alt+Shift+Tab`: Select previous tab
-    /// - `Alt+1-9`: Direct tab selection by index
+    /// - `Tab`: Select next tab
+    /// - `Shift+Tab`: Select previous tab
+    /// - `1-9`: Direct tab selection by index
     ///
     /// Returns `EventResult::Handled` if the event was consumed.
     ///
@@ -125,17 +125,18 @@ impl TabBar {
     pub fn handle_event(event: &Event, ctx: &mut AppContext) -> EventResult {
         match event {
             Event::Key(key) => match key.code {
-                // Alt+Tab / Alt+Shift+Tab for tab switching
-                KeyCode::Tab if key.modifiers.contains(KeyModifiers::ALT) => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        ctx.tabs().select_prev();
-                    } else {
-                        ctx.tabs().select_next();
-                    }
+                // Tab for next tab
+                KeyCode::Tab => {
+                    ctx.tabs().select_next();
                     EventResult::Handled
                 }
-                // Alt+1-9 for direct tab selection
-                KeyCode::Char(c @ '1'..='9') if key.modifiers.contains(KeyModifiers::ALT) => {
+                // Shift+Tab (BackTab) for previous tab
+                KeyCode::BackTab => {
+                    ctx.tabs().select_prev();
+                    EventResult::Handled
+                }
+                // 1-9 for direct tab selection
+                KeyCode::Char(c @ '1'..='9') => {
                     let index = (c as usize) - ('1' as usize);
                     ctx.tabs().select_by_index(index);
                     EventResult::Handled

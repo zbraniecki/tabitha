@@ -10,7 +10,7 @@ use ratatui::{layout::Rect, Frame};
 
 use crate::event::Event;
 use crate::focus::{EventResult, FocusManager};
-use crate::tabs::{TabInfo, TabManager};
+use crate::tabs::{TabInfo, TabManager, TabMut, TabRef};
 use crate::task::{BlockingHandle, CongestionController};
 use crate::task_manager::{TaskManager, TaskManagerContext};
 use crate::terminal::{Terminal, TerminalError};
@@ -19,70 +19,6 @@ use crate::widget::{Modal, ModalManager, ModalResult};
 
 // Import traits
 pub use self::traits::*;
-
-// =============================================================================
-// TabEventContext - Context for Tab event handlers (no TabManager access)
-// =============================================================================
-
-/// Context passed to Tab event handlers.
-///
-/// This is a subset of `AppContext` that doesn't include tab management,
-/// allowing tabs to be called without circular borrow issues.
-///
-/// `TabEventContext` provides methods to:
-/// - Request application quit
-/// - Toggle mouse capture
-/// - Access terminal state
-/// - Navigate focus
-pub struct TabEventContext<'a> {
-    pub(crate) terminal: &'a mut Terminal,
-    pub(crate) focus_manager: &'a mut FocusManager,
-    pub(crate) should_quit: bool,
-}
-
-impl<'a> TabEventContext<'a> {
-    /// Create a new tab event context.
-    #[allow(dead_code)]
-    pub(crate) fn new(terminal: &'a mut Terminal, focus_manager: &'a mut FocusManager) -> Self {
-        Self {
-            terminal,
-            focus_manager,
-            should_quit: false,
-        }
-    }
-}
-
-impl HasFocus for TabEventContext<'_> {
-    fn focus(&mut self) -> FocusEventContext<'_> {
-        FocusEventContext {
-            manager: self.focus_manager,
-        }
-    }
-}
-
-impl HasTerminal for TabEventContext<'_> {
-    fn mouse_capture_enabled(&self) -> bool {
-        self.terminal.mouse_capture_enabled()
-    }
-
-    fn set_mouse_capture(&mut self, enabled: bool) -> Result<(), TerminalError> {
-        self.terminal.set_mouse_capture(enabled)
-    }
-
-    fn terminal_size(&self) -> Result<Rect, TerminalError> {
-        self.terminal.size()
-    }
-}
-
-impl CanQuit for TabEventContext<'_> {
-    fn quit(&mut self) {
-        self.should_quit = true;
-    }
-
-    fn should_quit(&self) -> bool {
-        self.should_quit
-    }
-}
 
 // =============================================================================
 // AppContext - Full context for MainUi and Component handlers
@@ -185,6 +121,7 @@ impl HasTabs for AppContext<'_> {
     fn tabs(&mut self) -> TabsEventContext<'_> {
         TabsEventContext {
             manager: self.tab_manager,
+            focus_manager: self.focus_manager,
         }
     }
 }
@@ -249,9 +186,31 @@ impl CanSpawnBlocking for AppContext<'_> {
     }
 }
 
+/// Context provided to component lifecycle hooks.
+///
+/// This is a minimal context containing only what lifecycle hooks need.
+/// It provides access to focus management for auto-registering focus children.
+pub struct LifecycleContext<'a> {
+    focus_manager: &'a mut FocusManager,
+}
+
+impl<'a> LifecycleContext<'a> {
+    /// Create a new lifecycle context.
+    pub(crate) fn new(focus_manager: &'a mut FocusManager) -> Self {
+        Self { focus_manager }
+    }
+
+    /// Access focus controls.
+    pub fn focus(&mut self) -> FocusEventContext<'_> {
+        FocusEventContext {
+            manager: self.focus_manager,
+        }
+    }
+}
+
 /// Focus controls available during event handling.
 ///
-/// Access this through `AppContext::focus()` or `TabEventContext::focus()`.
+/// Access this through `AppContext::focus()`.
 pub struct FocusEventContext<'a> {
     manager: &'a mut FocusManager,
 }
@@ -447,12 +406,22 @@ impl ModalEventContext<'_> {
 /// Access this through `AppContext::tabs()`.
 pub struct TabsEventContext<'a> {
     manager: &'a mut TabManager,
+    focus_manager: &'a mut FocusManager,
 }
 
-impl TabsEventContext<'_> {
+impl<'a> TabsEventContext<'a> {
+    /// Create a new TabsEventContext for testing.
+    #[cfg(test)]
+    pub(crate) fn new(manager: &'a mut TabManager, focus_manager: &'a mut FocusManager) -> Self {
+        Self {
+            manager,
+            focus_manager,
+        }
+    }
+
     /// Get the list of all registered tabs.
     pub fn list(&self) -> Vec<TabInfo> {
-        self.manager.list()
+        self.manager.list().into_iter().cloned().collect()
     }
 
     /// Get the index of the currently active tab.
@@ -462,36 +431,110 @@ impl TabsEventContext<'_> {
 
     /// Get the ID of the currently active tab, if any.
     pub fn active_id(&self) -> Option<&str> {
-        self.manager.active_tab().map(|t| t.id())
+        self.manager.active().map(|(info, _)| info.id())
+    }
+
+    /// Get a tab by ID (immutable).
+    pub fn get(&self, id: &str) -> Option<TabRef<'_>> {
+        self.manager.get(id)
+    }
+
+    /// Get a tab by ID (mutable).
+    pub fn get_mut(&mut self, id: &str) -> Option<TabMut<'_>> {
+        self.manager.get_mut(id)
     }
 
     /// Select a tab by index.
     ///
     /// Returns `true` if the tab was selected, `false` if the index is invalid
     /// or the tab is disabled.
+    /// Automatically calls `on_unmount` on the old tab and `on_mount` on the new tab.
     pub fn select(&mut self, index: usize) -> bool {
-        self.manager.select(index)
+        let old_index = self.manager.active_index();
+
+        // Try to select the tab
+        if self.manager.select(index).is_none() {
+            return false;
+        }
+
+        // Create lifecycle context
+        let mut ctx = LifecycleContext::new(self.focus_manager);
+
+        // Call on_unmount on old tab (only if we're actually switching tabs)
+        if old_index != index {
+            if let Some(comp) = self.manager.get_component_mut(old_index) {
+                comp.on_unmount(&mut ctx);
+            }
+        }
+
+        // Call on_mount on new tab
+        if let Some(comp) = self.manager.active_component_mut() {
+            comp.on_mount(&mut ctx);
+        }
+
+        true
     }
 
     /// Select a tab by its unique ID.
     ///
     /// Returns `true` if the tab was found and selected.
+    /// Automatically calls `on_unmount` on the old tab and `on_mount` on the new tab.
     pub fn select_by_id(&mut self, id: &str) -> bool {
-        self.manager.select_by_id(id)
+        if let Some(index) = self.manager.index_by_id(id) {
+            self.select(index)
+        } else {
+            false
+        }
     }
 
     /// Select the next enabled tab.
     ///
     /// Wraps around to the first tab if at the end.
+    /// Automatically calls `on_unmount` on the old tab and `on_mount` on the new tab.
     pub fn select_next(&mut self) -> bool {
-        self.manager.select_next()
+        let old_index = self.manager.active_index();
+        let len = self.manager.len();
+        if len == 0 {
+            return false;
+        }
+
+        let mut index = (old_index + 1) % len;
+        let start = index;
+
+        loop {
+            if self.manager.is_enabled(index) {
+                return self.select(index);
+            }
+            index = (index + 1) % len;
+            if index == start {
+                return false;
+            }
+        }
     }
 
     /// Select the previous enabled tab.
     ///
     /// Wraps around to the last tab if at the beginning.
+    /// Automatically calls `on_unmount` on the old tab and `on_mount` on the new tab.
     pub fn select_prev(&mut self) -> bool {
-        self.manager.select_prev()
+        let old_index = self.manager.active_index();
+        let len = self.manager.len();
+        if len == 0 {
+            return false;
+        }
+
+        let mut index = (old_index + len - 1) % len;
+        let start = index;
+
+        loop {
+            if self.manager.is_enabled(index) {
+                return self.select(index);
+            }
+            index = (index + len - 1) % len;
+            if index == start {
+                return false;
+            }
+        }
     }
 
     /// Check if there are any registered tabs.
@@ -510,7 +553,7 @@ impl TabsEventContext<'_> {
     /// - The tab's own `is_enabled()` returns true
     /// - The tab has not been disabled via `set_enabled(id, false)`
     pub fn is_enabled(&self, id: &str) -> bool {
-        self.manager.is_enabled(id)
+        self.manager.is_enabled_by_id(id)
     }
 
     /// Enable or disable a tab by ID.
@@ -537,19 +580,20 @@ impl TabsEventContext<'_> {
         self.manager.set_enabled(id, enabled)
     }
 
-    /// Select a tab by index.
+    /// Select a tab by index (0-based).
     ///
     /// Returns `true` if the tab was selected, `false` if the index is invalid
     /// or the tab is disabled.
+    /// Automatically calls `on_unmount` on the old tab and `on_mount` on the new tab.
     pub fn select_by_index(&mut self, index: usize) -> bool {
-        self.manager.select(index)
+        self.select(index)
     }
 
     /// Forward an event to the active tab.
     ///
     /// This allows the TabContent widget to delegate events to the active tab.
     /// Returns `EventResult::Unhandled` if there is no active tab.
-    pub fn forward_event(&mut self, event: &Event, ctx: &mut TabEventContext) -> EventResult {
+    pub fn forward_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {
         self.manager.handle_event(event, ctx)
     }
 }
@@ -627,9 +671,7 @@ impl<'a> DrawContext<'a> {
     /// Access tab information and drawing methods.
     #[inline]
     pub fn tabs(&self) -> TabsDrawContext<'_> {
-        TabsDrawContext {
-            manager: self.tab_manager,
-        }
+        TabsDrawContext::new(self.tab_manager)
     }
 
     /// Access focus state for visual rendering.
@@ -678,9 +720,13 @@ pub struct TabsDrawContext<'a> {
     manager: &'a TabManager,
 }
 
-impl TabsDrawContext<'_> {
+impl<'a> TabsDrawContext<'a> {
+    pub(crate) fn new(manager: &'a TabManager) -> Self {
+        Self { manager }
+    }
+
     /// Get the list of all registered tabs.
-    pub fn list(&self) -> Vec<TabInfo> {
+    pub fn list(&self) -> Vec<&'a TabInfo> {
         self.manager.list()
     }
 
@@ -690,8 +736,8 @@ impl TabsDrawContext<'_> {
     }
 
     /// Get the ID of the currently active tab, if any.
-    pub fn active_id(&self) -> Option<&str> {
-        self.manager.active_tab().map(|t| t.id())
+    pub fn active_id(&self) -> Option<&'a str> {
+        self.manager.active().map(|(info, _)| info.id())
     }
 
     /// Check if there are any registered tabs.
@@ -704,32 +750,24 @@ impl TabsDrawContext<'_> {
         self.manager.len()
     }
 
-    /// Draw the tab bar to the given area.
-    ///
-    /// This renders a horizontal tab bar showing all registered tabs,
-    /// with the active tab highlighted.
-    pub fn draw_tabbar(&self, frame: &mut Frame, area: Rect) {
-        self.manager.draw_tabbar(frame, area);
-    }
-
     /// Draw the content of the currently active tab.
     ///
     /// This calls the active tab's `draw` method with the given area.
-    pub fn draw_content(&self, frame: &mut Frame, area: Rect) {
-        self.manager.draw_content(frame, area);
+    pub fn draw_content(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
+        self.manager.draw_active(frame, area, ctx);
     }
 
     /// Iterate over tab metadata.
     ///
     /// Returns an iterator over `TabInfo` for all registered tabs.
-    pub fn iter(&self) -> impl Iterator<Item = TabInfo> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = &'a TabInfo> + '_ {
         self.manager.list().into_iter()
     }
 
     /// Draw the active tab's content.
     ///
     /// This is an alias for `draw_content` for API consistency with the new widget pattern.
-    pub fn draw_active(&self, frame: &mut Frame, area: Rect) {
-        self.manager.draw_content(frame, area);
+    pub fn draw_active(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
+        self.manager.draw_active(frame, area, ctx);
     }
 }

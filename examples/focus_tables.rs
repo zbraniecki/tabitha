@@ -24,9 +24,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
     Frame,
 };
+use tabitha::widget::{TabBar, TabContent};
 use tabitha::{
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasTabs, KeyCode,
-    MainUi, Tab, TabEventContext,
+    MainUi,
 };
 
 // =============================================================================
@@ -35,16 +36,8 @@ use tabitha::{
 
 struct WelcomeTab;
 
-impl Tab for WelcomeTab {
-    fn id(&self) -> &str {
-        "welcome"
-    }
-
-    fn title(&self) -> &str {
-        "Welcome"
-    }
-
-    fn draw(&self, frame: &mut Frame, area: Rect) {
+impl Component for WelcomeTab {
+    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
         let content = Paragraph::new(
             "Welcome to the Focus Tables Example!\n\n\
              This example demonstrates focus navigation between widgets.\n\n\
@@ -58,6 +51,10 @@ impl Tab for WelcomeTab {
         )
         .style(Style::default().fg(Color::White));
         frame.render_widget(content, area);
+    }
+
+    fn handle_event(&mut self, _event: &Event, _ctx: &mut AppContext) -> EventResult {
+        EventResult::Unhandled
     }
 }
 
@@ -225,16 +222,8 @@ impl DataTab {
     }
 }
 
-impl Tab for DataTab {
-    fn id(&self) -> &str {
-        "data"
-    }
-
-    fn title(&self) -> &str {
-        "Data"
-    }
-
-    fn draw(&self, frame: &mut Frame, area: Rect) {
+impl Component for DataTab {
+    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
         // Create layout for two side-by-side tables
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -248,7 +237,7 @@ impl Tab for DataTab {
             .draw(frame, chunks[1], self.focused_table == 1);
     }
 
-    fn handle_event(&mut self, event: &Event, _ctx: &mut TabEventContext) -> EventResult {
+    fn handle_event(&mut self, event: &Event, _ctx: &mut AppContext) -> EventResult {
         if let Event::Key(key) = event {
             match key.code {
                 // Switch focus between tables
@@ -312,8 +301,8 @@ impl Component for FocusTablesApp {
         let tabbar_inner = tabbar_block.inner(chunks[0]);
         frame.render_widget(tabbar_block, chunks[0]);
 
-        // Draw tab bar
-        ctx.tabs().draw_tabbar(frame, tabbar_inner);
+        // Draw tab bar using TabBar widget
+        TabBar::draw(frame, tabbar_inner, ctx);
 
         // Draw border around content area
         let content_block = Block::default()
@@ -322,8 +311,8 @@ impl Component for FocusTablesApp {
         let content_inner = content_block.inner(chunks[1]);
         frame.render_widget(content_block, chunks[1]);
 
-        // Draw active tab content
-        ctx.tabs().draw_content(frame, content_inner);
+        // Draw active tab content using TabContent widget
+        TabContent::draw(frame, content_inner, ctx);
 
         // Footer with controls
         let tabs_ctx = ctx.tabs();
@@ -388,8 +377,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the application with tabs
     let app = AppBuilder::new()
         .main_ui(FocusTablesApp::new())
-        .add_tab(WelcomeTab)
-        .add_tab(DataTab::new())
+        .add_tab("welcome", "Welcome", WelcomeTab)
+        .add_tab("data", "Data", DataTab::new())
         .mouse_capture(false)
         .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)

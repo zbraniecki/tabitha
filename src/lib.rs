@@ -114,13 +114,13 @@ pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};
 pub use component::{BoxedComponent, Component, ComponentExt, MainUi};
 pub use context::{
     traits::{CanQuit, CanSpawnBlocking, HasFocus, HasModal, HasTabs, HasTaskManager, HasTerminal},
-    AppContext, DrawContext, FocusDrawContext, FocusEventContext, ModalEventContext,
-    TabEventContext, TabsDrawContext, TabsEventContext,
+    AppContext, DrawContext, FocusDrawContext, FocusEventContext, LifecycleContext,
+    ModalEventContext, TabsDrawContext, TabsEventContext,
 };
 pub use dev_console_layer::DevConsoleLayer;
 pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 pub use focus::{EventResult, FocusManager};
-pub use tabs::{BoxedTab, Tab, TabInfo, TabManager};
+pub use tabs::{TabInfo, TabManager, TabMut, TabRef};
 pub use task::{Task, TaskContext, TaskHandle};
 pub use task_manager::{SpawnError, TaskManager, TaskManagerContext};
 pub use terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};

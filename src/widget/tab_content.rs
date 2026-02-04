@@ -68,7 +68,7 @@ impl TabContent {
     /// }
     /// ```
     pub fn draw(frame: &mut Frame, area: Rect, ctx: &DrawContext) {
-        ctx.tabs().draw_active(frame, area);
+        ctx.tabs().draw_active(frame, area, ctx);
     }
 
     /// Forward events to the active tab.

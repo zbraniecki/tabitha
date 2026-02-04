@@ -115,6 +115,16 @@ pub struct AnimationController {
     animations: HashMap<String, Box<dyn Animation>>,
 }
 
+impl std::fmt::Debug for AnimationController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnimationController")
+            .field("enabled", &self.enabled)
+            .field("speed_multiplier", &self.speed_multiplier)
+            .field("animations", &self.animations.len())
+            .finish()
+    }
+}
+
 impl AnimationController {
     /// Create a new animation controller.
     ///

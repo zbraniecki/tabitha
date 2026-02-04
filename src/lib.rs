@@ -102,6 +102,7 @@ pub mod dev_console_layer;
 pub mod event;
 pub mod focus;
 pub mod macros;
+pub mod sidebar;
 pub mod tabs;
 pub mod task;
 pub mod task_manager;
@@ -125,6 +126,7 @@ pub use context::{
 pub use dev_console_layer::DevConsoleLayer;
 pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 pub use focus::{EventResult, FocusManager};
+pub use sidebar::{Side, Sidebar, SidebarPanel, SidebarState, SidebarVisibility};
 pub use tabs::{TabInfo, TabManager, TabMut, TabRef};
 pub use task::{Task, TaskContext, TaskHandle};
 pub use task_manager::{SpawnError, TaskManager, TaskManagerContext};

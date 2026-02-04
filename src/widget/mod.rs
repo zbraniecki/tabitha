@@ -66,6 +66,7 @@ pub use textbox::{TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};
 
 use ratatui::{layout::Rect, Frame};
 
+use crate::animation::ControlAnimationContext;
 use crate::event::Event;
 use crate::focus::EventResult;
 
@@ -124,7 +125,7 @@ pub trait Control: Send {
     ///
     /// Returns `true` if the control's visual state changed and a redraw
     /// is needed.
-    fn tick(&mut self) -> bool {
+    fn tick(&mut self, _ctx: &mut ControlAnimationContext<'_>) -> bool {
         false
     }
 
@@ -163,8 +164,8 @@ impl Default for CursorBlinkConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            on_duration_ms: 530,
-            off_duration_ms: 530,
+            on_duration_ms: 1200,
+            off_duration_ms: 600,
         }
     }
 }
@@ -195,6 +196,93 @@ impl CursorBlinkConfig {
     /// Total blink cycle duration.
     pub fn cycle_duration_ms(&self) -> u64 {
         self.on_duration_ms + self.off_duration_ms
+    }
+}
+
+/// Animation mode for the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorAnimationMode {
+    /// Simple on/off blink animation.
+    #[default]
+    Blink,
+    /// Smooth fade in/out animation.
+    Fade,
+}
+
+/// Configuration for cursor fade animation.
+///
+/// Provides smooth fade in/out for the cursor using RGB color interpolation.
+/// Works best with RGB colors but falls back gracefully for indexed colors.
+#[derive(Debug, Clone)]
+pub struct CursorFadeConfig {
+    /// Duration for fade in (milliseconds).
+    pub fade_in_duration_ms: u64,
+    /// Duration for fade out (milliseconds).
+    pub fade_out_duration_ms: u64,
+    /// Time to hold at full brightness after fade in completes (milliseconds).
+    pub hold_full_duration_ms: u64,
+    /// Time to hold at dim brightness after fade out completes (milliseconds).
+    pub hold_dim_duration_ms: u64,
+    /// Color at 0% brightness (dim).
+    pub dim_color: (u8, u8, u8),
+    /// Color at 100% brightness (full).
+    pub full_color: (u8, u8, u8),
+}
+
+impl Default for CursorFadeConfig {
+    fn default() -> Self {
+        Self {
+            fade_in_duration_ms: 350,    // Fast from zero, ease in at max
+            fade_out_duration_ms: 900,   // Slow start from max, speed to zero
+            hold_full_duration_ms: 400,  // Linger at bright
+            hold_dim_duration_ms: 0,     // No pause at zero
+            dim_color: (0, 0, 0),        // Black (invisible against background)
+            full_color: (255, 255, 255), // Bright white
+        }
+    }
+}
+
+impl CursorFadeConfig {
+    /// Create a fade config from theme accent color.
+    ///
+    /// Automatically calculates the dim color at 50% brightness.
+    pub fn from_theme_accent(theme: &crate::theme::Theme) -> Self {
+        match theme.accent {
+            ratatui::style::Color::Rgb(r, g, b) => Self {
+                dim_color: (r / 2, g / 2, b / 2),
+                full_color: (r, g, b),
+                ..Default::default()
+            },
+            _ => Self {
+                // For indexed colors, convert to RGB first
+                dim_color: (50, 50, 50),
+                full_color: (255, 255, 255),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Create a fade config with custom colors and durations.
+    pub fn with_colors(
+        dim: (u8, u8, u8),
+        full: (u8, u8, u8),
+        fade_in_ms: u64,
+        fade_out_ms: u64,
+    ) -> Self {
+        Self {
+            dim_color: dim,
+            full_color: full,
+            fade_in_duration_ms: fade_in_ms,
+            fade_out_duration_ms: fade_out_ms,
+            ..Default::default()
+        }
+    }
+
+    /// Set the hold durations.
+    pub fn with_hold_times(mut self, hold_full_ms: u64, hold_dim_ms: u64) -> Self {
+        self.hold_full_duration_ms = hold_full_ms;
+        self.hold_dim_duration_ms = hold_dim_ms;
+        self
     }
 }
 

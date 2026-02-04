@@ -8,7 +8,7 @@ pub mod traits;
 
 use ratatui::{layout::Rect, Frame};
 
-use crate::animation::{AnimationController, AnimationEventContext};
+use crate::animation::{AnimationController, AnimationEventContext, ControlAnimationContext};
 use crate::event::Event;
 use crate::focus::{EventResult, FocusManager};
 use crate::tabs::{TabInfo, TabManager, TabMut, TabRef};
@@ -120,6 +120,15 @@ impl<'a> AppContext<'a> {
         self.animation_controller
             .as_mut()
             .map(|controller| AnimationEventContext::new(controller))
+    }
+
+    /// Access the control animation context for ticking controls.
+    ///
+    /// Returns `None` if animations are not enabled for this app.
+    pub fn control_animations(&mut self) -> Option<ControlAnimationContext<'_>> {
+        self.animation_controller
+            .as_mut()
+            .map(|controller| ControlAnimationContext::new(controller))
     }
 }
 

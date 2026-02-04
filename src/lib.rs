@@ -111,7 +111,8 @@ pub mod widget;
 
 // Re-export main types at crate root for convenience
 pub use animation::{
-    Animation, AnimationController, AnimationEventContext, BlinkAnimation, SpinnerAnimation,
+    Animation, AnimationController, AnimationEventContext, BlinkAnimation, ControlAnimationContext,
+    FadeAnimation, FadeDirection, SpinnerAnimation,
 };
 pub use app::{App, AppBuilder, AppError, BuildError};
 pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};
@@ -139,10 +140,10 @@ pub use task::{spawn_blocking, spawn_blocking_or_err, BlockingHandle, BlockingTa
 // Re-export widget types
 pub use widget::{
     BoxedControl, Column, ColumnAlign, ColumnType, ColumnWidth, Control, ControlEvent, ControlExt,
-    CursorBlinkConfig, DataTable, DataTableConfig, DataTableEvent, DevConsole, LogLine, Modal,
-    ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult, SelectionMode, SimpleRow,
-    SortDirection, SortState, TabBar, TabContent, TableRow, TextBox, TextBoxBuilder, TextBoxConfig,
-    TextBoxEvent,
+    CursorAnimationMode, CursorBlinkConfig, CursorFadeConfig, DataTable, DataTableConfig,
+    DataTableEvent, DevConsole, LogLine, Modal, ModalButton, ModalConfig, ModalInput, ModalManager,
+    ModalResult, SelectionMode, SimpleRow, SortDirection, SortState, TabBar, TabContent, TableRow,
+    TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent,
 };
 
 // Re-export ratatui types that users commonly need

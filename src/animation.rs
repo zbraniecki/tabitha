@@ -54,6 +54,53 @@ pub trait Animation: Send {
     fn is_complete(&self) -> bool {
         false
     }
+
+    /// Pause the animation.
+    ///
+    /// Default implementation does nothing.
+    fn pause(&mut self) {
+        // Default: no-op
+    }
+
+    /// Resume the animation.
+    ///
+    /// Default implementation does nothing.
+    fn resume(&mut self) {
+        // Default: no-op
+    }
+
+    /// Check if the animation is paused.
+    ///
+    /// Default implementation returns `false`.
+    fn is_paused(&self) -> bool {
+        false
+    }
+
+    /// Set the animation progress directly (0.0 to 1.0).
+    ///
+    /// Default implementation does nothing.
+    fn set_progress(&mut self, _progress: f32) {
+        // Default: no-op
+    }
+
+    /// Get the current progress (0.0 to 1.0).
+    ///
+    /// Default implementation returns 0.0.
+    fn progress(&self) -> f32 {
+        0.0
+    }
+
+    /// Get the current color.
+    ///
+    /// Returns `None` for animations without color.
+    fn current_color(&self) -> Option<ratatui::style::Color> {
+        None
+    }
+
+    /// Set hold durations for full and dim states.
+    ///
+    /// Default implementation does nothing.
+    fn set_hold_durations(&mut self, _full_duration: Duration, _dim_duration: Duration) {}
 }
 
 /// Global controller for all animations in the app.
@@ -203,6 +250,73 @@ impl AnimationController {
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.animations.keys().map(|s| s.as_str())
     }
+
+    /// Pause a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn pause_animation(&mut self, id: &str) -> bool {
+        if let Some(anim) = self.animations.get_mut(id) {
+            anim.pause();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Resume a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn resume_animation(&mut self, id: &str) -> bool {
+        if let Some(anim) = self.animations.get_mut(id) {
+            anim.resume();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set progress for a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn set_animation_progress(&mut self, id: &str, progress: f32) -> bool {
+        if let Some(anim) = self.animations.get_mut(id) {
+            anim.set_progress(progress);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the current color for a fade animation.
+    ///
+    /// Returns `None` if the animation doesn't exist or isn't a fade animation.
+    pub fn current_color(&self, id: &str) -> Option<ratatui::style::Color> {
+        self.animations.get(id).and_then(|a| a.current_color())
+    }
+
+    /// Check if an animation is paused.
+    ///
+    /// Returns `None` if the animation doesn't exist.
+    pub fn is_animation_paused(&self, id: &str) -> Option<bool> {
+        self.animations.get(id).map(|a| a.is_paused())
+    }
+
+    /// Set hold durations for a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn set_animation_hold_durations(
+        &mut self,
+        id: &str,
+        full_duration: Duration,
+        dim_duration: Duration,
+    ) -> bool {
+        if let Some(anim) = self.animations.get_mut(id) {
+            anim.set_hold_durations(full_duration, dim_duration);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Default for AnimationController {
@@ -297,6 +411,82 @@ impl<'a> AnimationEventContext<'a> {
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
         self.controller.is_empty()
+    }
+}
+
+/// Animation context available to controls during tick() for per-animation operations.
+///
+/// This context provides control over individual animations, allowing controls
+/// to pause, resume, and query animation state.
+///
+/// Access this through `AnimationContext` passed to the `tick()` method.
+pub struct ControlAnimationContext<'a> {
+    controller: &'a mut AnimationController,
+}
+
+impl<'a> ControlAnimationContext<'a> {
+    /// Create a new control animation context.
+    pub fn new(controller: &'a mut AnimationController) -> Self {
+        Self { controller }
+    }
+
+    /// Pause a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn pause(&mut self, id: &str) -> bool {
+        self.controller.pause_animation(id)
+    }
+
+    /// Resume a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn resume(&mut self, id: &str) -> bool {
+        self.controller.resume_animation(id)
+    }
+
+    /// Set the progress for a specific animation.
+    ///
+    /// Progress is clamped to 0.0-1.0 range.
+    /// Returns `true` if the animation was found.
+    pub fn set_progress(&mut self, id: &str, progress: f32) -> bool {
+        self.controller.set_animation_progress(id, progress)
+    }
+
+    /// Get the current color for a fade animation.
+    ///
+    /// Returns `None` if the animation doesn't exist or isn't a fade animation.
+    pub fn current_color(&self, id: &str) -> Option<ratatui::style::Color> {
+        self.controller.current_color(id)
+    }
+
+    /// Check if an animation is paused.
+    ///
+    /// Returns `None` if the animation doesn't exist.
+    pub fn is_paused(&self, id: &str) -> Option<bool> {
+        self.controller.is_animation_paused(id)
+    }
+
+    /// Set hold durations for a specific animation.
+    ///
+    /// Returns `true` if the animation was found.
+    pub fn set_hold_durations(
+        &mut self,
+        id: &str,
+        full_duration: Duration,
+        dim_duration: Duration,
+    ) -> bool {
+        self.controller
+            .set_animation_hold_durations(id, full_duration, dim_duration)
+    }
+
+    /// Register a new animation with the controller.
+    pub fn add(&mut self, id: impl Into<String>, animation: impl Animation + 'static) {
+        self.controller.add(id, animation);
+    }
+
+    /// Check if an animation exists.
+    pub fn contains(&self, id: &str) -> bool {
+        self.controller.contains(id)
     }
 }
 
@@ -483,6 +673,382 @@ impl Animation for SpinnerAnimation {
 impl Default for SpinnerAnimation {
     fn default() -> Self {
         Self::classic(Duration::from_millis(100))
+    }
+}
+
+/// Direction of fade animation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeDirection {
+    /// Fading in (from dim to full brightness)
+    In,
+    /// Fading out (from full brightness to dim)
+    Out,
+}
+
+/// A fade animation that interpolates between two RGB colors.
+///
+/// This creates smooth color transitions by interpolating between
+/// a dim color and a full color over a specified duration.
+pub struct FadeAnimation {
+    /// Current progress from 0.0 (dim) to 1.0 (full)
+    progress: f32,
+    /// Elapsed time since last progress update
+    elapsed: Duration,
+    /// Duration for fading in (dim to full)
+    fade_in_duration: Duration,
+    /// Duration for fading out (full to dim)
+    fade_out_duration: Duration,
+    /// Current fade direction
+    direction: FadeDirection,
+    /// Color at 0% progress (dim)
+    dim_color: (u8, u8, u8),
+    /// Color at 100% progress (full brightness)
+    full_color: (u8, u8, u8),
+    /// Whether animation loops (fade in then out)
+    loop_animation: bool,
+    /// Whether the animation is paused
+    paused: bool,
+    /// Hold time remaining (when at dim/full before switching)
+    hold_remaining: Option<Duration>,
+    /// Duration to hold at full brightness after fade in
+    hold_full_duration: Duration,
+    /// Duration to hold at dim brightness after fade out
+    hold_dim_duration: Duration,
+}
+
+impl FadeAnimation {
+    /// Create a new fade animation with RGB colors.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::animation::{FadeAnimation, FadeDirection};
+    /// use std::time::Duration;
+    ///
+    /// // Fade from dim gray to bright white over 300ms
+    /// let fade = FadeAnimation::new(
+    ///     (50, 50, 50),     // dim gray
+    ///     (255, 255, 255),  // bright white
+    ///     Duration::from_millis(300),
+    /// );
+    /// ```
+    pub fn new(dim_color: (u8, u8, u8), full_color: (u8, u8, u8), duration: Duration) -> Self {
+        Self {
+            progress: 0.0,
+            elapsed: Duration::ZERO,
+            fade_in_duration: duration,
+            fade_out_duration: duration,
+            direction: FadeDirection::In,
+            dim_color,
+            full_color,
+            loop_animation: true,
+            paused: false,
+            hold_remaining: None,
+            hold_full_duration: Duration::ZERO,
+            hold_dim_duration: Duration::ZERO,
+        }
+    }
+
+    /// Create a new fade animation with hold times at dim and full.
+    ///
+    /// This is useful for cursor animations that should linger at
+    /// full brightness before fading out.
+    pub fn with_hold_times(
+        dim_color: (u8, u8, u8),
+        full_color: (u8, u8, u8),
+        fade_in_duration: Duration,
+        hold_full: Duration,
+        hold_dim: Duration,
+    ) -> Self {
+        Self {
+            progress: 0.0,
+            elapsed: Duration::ZERO,
+            fade_in_duration,
+            fade_out_duration: fade_in_duration,
+            direction: FadeDirection::In,
+            dim_color,
+            full_color,
+            loop_animation: true,
+            paused: false,
+            hold_remaining: None,
+            hold_full_duration: hold_full,
+            hold_dim_duration: hold_dim,
+        }
+    }
+
+    /// Set the fade out duration separately from fade in.
+    pub fn set_fade_out_duration(&mut self, duration: Duration) {
+        self.fade_out_duration = duration;
+    }
+
+    /// Get the fade in duration.
+    pub fn fade_in_duration(&self) -> Duration {
+        self.fade_in_duration
+    }
+
+    /// Get the fade out duration.
+    pub fn fade_out_duration(&self) -> Duration {
+        self.fade_out_duration
+    }
+
+    /// Create a fade animation from theme colors.
+    ///
+    /// Automatically calculates the dim color at 50% brightness
+    /// from the provided full color.
+    pub fn from_theme_color(full_color: ratatui::style::Color, duration: Duration) -> Self {
+        let (r, g, b) = match full_color {
+            ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+            _ => (255, 255, 255), // Default to white for non-RGB colors
+        };
+
+        let dim_color = (r / 2, g / 2, b / 2);
+        Self::new(dim_color, (r, g, b), duration)
+    }
+
+    /// Pause the animation at its current state.
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    /// Resume the animation from its current state.
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    /// Check if the animation is paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Set the progress directly (0.0 to 1.0).
+    ///
+    /// This is useful for forcing a specific brightness level,
+    /// such as when typing pauses the cursor animation at full brightness.
+    pub fn set_progress(&mut self, progress: f32) {
+        self.progress = progress.clamp(0.0, 1.0);
+        self.elapsed = Duration::ZERO;
+    }
+
+    /// Set the hold durations for full and dim states.
+    pub fn set_hold_durations(&mut self, hold_full: Duration, hold_dim: Duration) {
+        self.hold_full_duration = hold_full;
+        self.hold_dim_duration = hold_dim;
+    }
+
+    /// Get the current interpolated color with direction-aware easing.
+    pub fn current_color(&self) -> ratatui::style::Color {
+        let (dr, dg, db) = self.dim_color;
+        let (fr, fg, fb) = self.full_color;
+
+        let fading_in = matches!(self.direction, FadeDirection::In);
+
+        let r = Self::lerp_eased(dr, fr, self.progress, fading_in);
+        let g = Self::lerp_eased(dg, fg, self.progress, fading_in);
+        let b = Self::lerp_eased(db, fb, self.progress, fading_in);
+
+        ratatui::style::Color::Rgb(r, g, b)
+    }
+
+    /// Get the current progress (0.0 to 1.0).
+    pub fn progress(&self) -> f32 {
+        self.progress
+    }
+
+    /// Get the current fade direction.
+    pub fn direction(&self) -> FadeDirection {
+        self.direction
+    }
+
+    /// Set whether the animation should loop.
+    pub fn set_loop(&mut self, loop_animation: bool) {
+        self.loop_animation = loop_animation;
+    }
+
+    /// Check if animation loops.
+    pub fn is_looping(&self) -> bool {
+        self.loop_animation
+    }
+
+    /// Linear interpolation between two values.
+    fn lerp(start: u8, end: u8, t: f32) -> u8 {
+        let start_f = start as f32;
+        let end_f = end as f32;
+        let result = start_f + (end_f - start_f) * t;
+        result.clamp(0.0, 255.0) as u8
+    }
+
+    /// Ease-out: fast start, slow end (for fade in).
+    /// Quadratic ease-out for snappy start from zero and smooth landing at max.
+    fn ease_out(t: f32) -> f32 {
+        1.0 - (1.0 - t) * (1.0 - t)
+    }
+
+    /// Ease-in: slow start, fast end (for fade out).
+    /// Quadratic ease-in for gentle start from max and quick exit to zero.
+    fn ease_in(t: f32) -> f32 {
+        t * t
+    }
+
+    /// Apply appropriate easing based on direction.
+    fn lerp_eased(start: u8, end: u8, t: f32, fading_in: bool) -> u8 {
+        let eased_t = if fading_in {
+            Self::ease_out(t) // Fast from zero, slow to max
+        } else {
+            Self::ease_in(t) // Slow from max, fast to zero
+        };
+        Self::lerp(start, end, eased_t)
+    }
+}
+
+impl Animation for FadeAnimation {
+    fn tick(&mut self, elapsed: Duration) -> bool {
+        // When paused, don't update but still return true if we have progress
+        // to show (needed for initial rendering after pause)
+        if self.paused {
+            return false;
+        }
+
+        // Handle hold state first
+        if let Some(hold_remaining) = self.hold_remaining {
+            if elapsed >= hold_remaining {
+                // Hold complete, start fading in opposite direction
+                self.hold_remaining = None;
+                self.elapsed = elapsed - hold_remaining;
+                self.direction = match self.direction {
+                    FadeDirection::In => FadeDirection::Out,
+                    FadeDirection::Out => FadeDirection::In,
+                };
+                self.progress = match self.direction {
+                    FadeDirection::In => 0.0,
+                    FadeDirection::Out => 1.0,
+                };
+                return true;
+            } else {
+                // Still holding
+                self.hold_remaining = Some(hold_remaining - elapsed);
+                return false;
+            }
+        }
+
+        self.elapsed += elapsed;
+
+        // Get the appropriate duration based on direction
+        let current_duration = match self.direction {
+            FadeDirection::In => self.fade_in_duration,
+            FadeDirection::Out => self.fade_out_duration,
+        };
+
+        if self.elapsed >= current_duration {
+            // Fade complete, check if we should hold or switch immediately
+            self.elapsed -= current_duration;
+
+            let hold_duration = match self.direction {
+                FadeDirection::In => self.hold_full_duration,
+                FadeDirection::Out => self.hold_dim_duration,
+            };
+
+            if hold_duration > Duration::ZERO && self.loop_animation {
+                // Enter hold state
+                self.hold_remaining = Some(hold_duration);
+                self.progress = match self.direction {
+                    FadeDirection::In => 1.0,
+                    FadeDirection::Out => 0.0,
+                };
+                true
+            } else {
+                // Switch immediately
+                match self.direction {
+                    FadeDirection::In => {
+                        self.progress = 1.0;
+                        if self.loop_animation {
+                            self.direction = FadeDirection::Out;
+                        }
+                    }
+                    FadeDirection::Out => {
+                        self.progress = 0.0;
+                        if self.loop_animation {
+                            self.direction = FadeDirection::In;
+                        }
+                    }
+                }
+                true
+            }
+        } else {
+            // Update progress within current phase
+            let t = self.elapsed.as_secs_f32() / current_duration.as_secs_f32();
+            self.progress = match self.direction {
+                FadeDirection::In => t,
+                FadeDirection::Out => 1.0 - t,
+            };
+            true // Always needs redraw during fade for smoothness
+        }
+    }
+
+    fn reset(&mut self) {
+        self.progress = 0.0;
+        self.elapsed = Duration::ZERO;
+        self.direction = FadeDirection::In;
+        self.hold_remaining = None;
+        self.paused = false;
+    }
+
+    fn is_visible(&self) -> bool {
+        // Always visible during fade, just at different brightness
+        true
+    }
+
+    fn is_complete(&self) -> bool {
+        // Only complete if not looping and we're at end of fade out
+        !self.loop_animation && self.direction == FadeDirection::Out && self.progress <= 0.0
+    }
+
+    fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    fn set_progress(&mut self, progress: f32) {
+        self.progress = progress.clamp(0.0, 1.0);
+        self.elapsed = Duration::ZERO;
+    }
+
+    fn progress(&self) -> f32 {
+        self.progress
+    }
+
+    fn current_color(&self) -> Option<ratatui::style::Color> {
+        Some(self.current_color())
+    }
+
+    fn set_hold_durations(&mut self, full_duration: Duration, dim_duration: Duration) {
+        self.hold_full_duration = full_duration;
+        self.hold_dim_duration = dim_duration;
+    }
+}
+
+impl Default for FadeAnimation {
+    fn default() -> Self {
+        Self {
+            progress: 0.0,
+            elapsed: Duration::ZERO,
+            fade_in_duration: Duration::from_millis(300),
+            fade_out_duration: Duration::from_millis(300),
+            direction: FadeDirection::In,
+            dim_color: (50, 50, 50),
+            full_color: (255, 255, 255),
+            loop_animation: true,
+            paused: false,
+            hold_remaining: None,
+            hold_full_duration: Duration::ZERO,
+            hold_dim_duration: Duration::ZERO,
+        }
     }
 }
 

@@ -38,9 +38,13 @@ use ratatui::{
     Frame,
 };
 
+use crate::animation::{ControlAnimationContext, FadeAnimation};
 use crate::event::{Event, KeyCode, KeyModifiers};
 use crate::focus::EventResult;
-use crate::widget::{Control, ControlEvent, CursorBlinkConfig};
+use crate::widget::{
+    Control, ControlEvent, CursorAnimationMode, CursorBlinkConfig, CursorFadeConfig,
+};
+use std::time::Duration;
 
 /// Events emitted by TextBox.
 #[derive(Debug, Clone)]
@@ -64,8 +68,12 @@ impl ControlEvent for TextBoxEvent {}
 /// Configuration for TextBox appearance and behavior.
 #[derive(Debug, Clone)]
 pub struct TextBoxConfig {
-    /// Cursor blink configuration.
+    /// Cursor blink configuration (used when cursor_mode is Blink).
     pub cursor_blink: CursorBlinkConfig,
+    /// Cursor animation mode (Blink or Fade).
+    pub cursor_mode: CursorAnimationMode,
+    /// Cursor fade configuration (used when cursor_mode is Fade).
+    pub cursor_fade: Option<CursorFadeConfig>,
     /// Style for the text when focused.
     pub focused_style: Style,
     /// Style for the text when unfocused.
@@ -88,6 +96,8 @@ impl Default for TextBoxConfig {
     fn default() -> Self {
         Self {
             cursor_blink: CursorBlinkConfig::default(),
+            cursor_mode: CursorAnimationMode::default(),
+            cursor_fade: Some(CursorFadeConfig::default()),
             focused_style: Style::default().fg(Color::White),
             unfocused_style: Style::default().fg(Color::Gray),
             focused_border_style: Style::default().fg(Color::Yellow),
@@ -224,10 +234,23 @@ impl TextBoxBuilder {
         self
     }
 
+    /// Set the cursor animation mode.
+    pub fn cursor_mode(mut self, mode: CursorAnimationMode) -> Self {
+        self.config.cursor_mode = mode;
+        self
+    }
+
+    /// Set the cursor fade configuration.
+    pub fn cursor_fade(mut self, config: CursorFadeConfig) -> Self {
+        self.config.cursor_fade = Some(config);
+        self
+    }
+
     /// Build the TextBox.
     pub fn build(self) -> TextBox {
         let text = self.text.unwrap_or_default();
         let cursor_pos = text.chars().count();
+        let animation_id = format!("cursor_{}", self.id);
 
         TextBox {
             id: self.id,
@@ -236,8 +259,11 @@ impl TextBoxBuilder {
             placeholder: self.placeholder,
             title: self.title,
             config: self.config,
-            cursor_visible: true,
-            last_blink: None,
+            animation_id,
+            last_text_change: None,
+            text_modified_this_tick: false,
+            animation_registered: false,
+            cursor_color: Color::White,
             events: Vec::new(),
             scroll_offset: Cell::new(0),
         }
@@ -259,10 +285,16 @@ pub struct TextBox {
     title: Option<String>,
     /// Configuration.
     config: TextBoxConfig,
-    /// Whether cursor is currently visible (for blinking).
-    cursor_visible: bool,
-    /// Last time cursor visibility was toggled.
-    last_blink: Option<Instant>,
+    /// Animation ID for cursor (registered with AnimationController).
+    animation_id: String,
+    /// Last time text was modified (for pausing animation during typing).
+    last_text_change: Option<Instant>,
+    /// Whether text was modified this tick (to detect continuous typing).
+    text_modified_this_tick: bool,
+    /// Whether the cursor animation has been registered with the controller.
+    animation_registered: bool,
+    /// Current cursor color (updated during tick, used during draw).
+    cursor_color: Color,
     /// Pending events to be consumed by parent.
     events: Vec<TextBoxEvent>,
     /// Scroll offset for long text (Cell for interior mutability in draw).
@@ -274,15 +306,20 @@ impl TextBox {
     ///
     /// For more complex configuration, use [TextBox::builder] instead.
     pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        let animation_id = format!("cursor_{}", id);
         Self {
-            id: id.into(),
+            id,
             text: String::new(),
             cursor_pos: 0,
             placeholder: None,
             title: None,
             config: TextBoxConfig::default(),
-            cursor_visible: true,
-            last_blink: None,
+            animation_id,
+            last_text_change: None,
+            text_modified_this_tick: false,
+            animation_registered: false,
+            cursor_color: Color::White,
             events: Vec::new(),
             scroll_offset: Cell::new(0),
         }
@@ -396,6 +433,7 @@ impl TextBox {
 
         self.text.insert(byte_idx, c);
         self.cursor_pos += 1;
+        self.mark_text_changed();
         self.emit(TextBoxEvent::Changed(self.text.clone()));
     }
 
@@ -410,6 +448,7 @@ impl TextBox {
                 .map(|(i, _)| i)
                 .unwrap();
             self.text.remove(byte_idx);
+            self.mark_text_changed();
             self.emit(TextBoxEvent::Changed(self.text.clone()));
         }
     }
@@ -513,10 +552,36 @@ impl TextBox {
         self.events.push(event);
     }
 
-    /// Reset cursor blink state (make cursor visible).
-    fn reset_blink(&mut self) {
-        self.cursor_visible = true;
-        self.last_blink = Some(Instant::now());
+    /// Mark that text has been modified (will pause animation).
+    fn mark_text_changed(&mut self) {
+        self.text_modified_this_tick = true;
+        self.last_text_change = Some(Instant::now());
+    }
+
+    /// Create the cursor fade animation for this textbox.
+    fn create_cursor_animation(&self) -> FadeAnimation {
+        let fade_config = self.config.cursor_fade.as_ref();
+        let (dim_color, full_color) = match fade_config {
+            Some(config) => (config.dim_color, config.full_color),
+            None => ((0, 0, 0), (255, 255, 255)),
+        };
+
+        let fade_in_ms = fade_config.map(|c| c.fade_in_duration_ms).unwrap_or(350);
+        let fade_out_ms = fade_config.map(|c| c.fade_out_duration_ms).unwrap_or(900);
+        let hold_full_ms = fade_config.map(|c| c.hold_full_duration_ms).unwrap_or(400);
+        let hold_dim_ms = fade_config.map(|c| c.hold_dim_duration_ms).unwrap_or(0);
+
+        let mut animation = FadeAnimation::with_hold_times(
+            dim_color,
+            full_color,
+            Duration::from_millis(fade_in_ms),
+            Duration::from_millis(hold_full_ms),
+            Duration::from_millis(hold_dim_ms),
+        );
+
+        // Set the fade out duration as well
+        animation.set_fade_out_duration(Duration::from_millis(fade_out_ms));
+        animation
     }
 
     /// Calculate the display text (potentially masked).
@@ -574,17 +639,20 @@ impl Control for TextBox {
         }
         let scroll_offset = self.scroll_offset.get();
 
-        // Determine what to show
+        // Determine what to show - cursor always shows, but may be invisible (dim)
+        let cursor_style = self.config.cursor_style.bg(self.cursor_color);
+        let should_show_cursor = true;
+
         if is_empty {
-            // Empty text - show placeholder (with blinking first char when focused)
+            // Empty text - show placeholder (with cursor on first char when focused)
             if let Some(ref placeholder) = self.placeholder {
                 if focused {
-                    // Cursor blinks on the first character of the placeholder
+                    // Cursor on the first character of the placeholder
                     let mut chars = placeholder.chars();
                     if let Some(first_char) = chars.next() {
                         let rest: String = chars.collect();
-                        let first_style = if self.cursor_visible {
-                            self.config.cursor_style
+                        let first_style = if should_show_cursor {
+                            cursor_style
                         } else {
                             self.config.placeholder_style
                         };
@@ -602,9 +670,9 @@ impl Control for TextBox {
                         Paragraph::new(placeholder.as_str()).style(self.config.placeholder_style);
                     frame.render_widget(para, inner);
                 }
-            } else if focused && self.cursor_visible {
+            } else if focused && should_show_cursor {
                 // No placeholder, just show cursor block
-                let cursor_span = Span::styled(" ", self.config.cursor_style);
+                let cursor_span = Span::styled(" ", cursor_style);
                 let line = Line::from(vec![cursor_span]);
                 let para = Paragraph::new(line);
                 frame.render_widget(para, inner);
@@ -631,9 +699,9 @@ impl Control for TextBox {
                         .unwrap_or_else(|| " ".to_string());
                     let after: String = visible_chars.chars().skip(cursor_rel + 1).collect();
 
-                    // Cursor char uses cursor style only when visible (blinking)
-                    let cursor_char_style = if self.cursor_visible {
-                        self.config.cursor_style
+                    // Cursor char uses cursor style based on animation mode
+                    let cursor_char_style = if should_show_cursor {
+                        cursor_style
                     } else {
                         text_style
                     };
@@ -685,7 +753,6 @@ impl Control for TextBox {
                                 }
                                 'w' => {
                                     self.delete_word_back();
-                                    self.reset_blink();
                                     true
                                 }
                                 'u' => {
@@ -694,15 +761,15 @@ impl Control for TextBox {
                                         self.text.chars().skip(self.cursor_pos).collect();
                                     self.text = new_text;
                                     self.cursor_pos = 0;
+                                    self.mark_text_changed();
                                     self.emit(TextBoxEvent::Changed(self.text.clone()));
-                                    self.reset_blink();
                                     true
                                 }
                                 'k' => {
                                     // Delete from cursor to end
                                     self.text = self.text.chars().take(self.cursor_pos).collect();
+                                    self.mark_text_changed();
                                     self.emit(TextBoxEvent::Changed(self.text.clone()));
-                                    self.reset_blink();
                                     true
                                 }
                                 _ => false,
@@ -721,7 +788,6 @@ impl Control for TextBox {
                             }
                         } else {
                             self.insert_char(c);
-                            self.reset_blink();
                             true
                         }
                     }
@@ -765,12 +831,10 @@ impl Control for TextBox {
                         } else {
                             self.backspace();
                         }
-                        self.reset_blink();
                         true
                     }
                     KeyCode::Delete => {
                         self.delete_char();
-                        self.reset_blink();
                         true
                     }
 
@@ -798,7 +862,6 @@ impl Control for TextBox {
                     }
                     self.insert_char(c);
                 }
-                self.reset_blink();
                 EventResult::Handled
             }
 
@@ -806,26 +869,48 @@ impl Control for TextBox {
         }
     }
 
-    fn tick(&mut self) -> bool {
-        if !self.config.cursor_blink.enabled {
-            return false;
+    fn tick(&mut self, ctx: &mut ControlAnimationContext<'_>) -> bool {
+        const TYPING_IDLE_THRESHOLD_MS: u64 = 500;
+
+        // Register animation on first tick if not already done
+        if !self.animation_registered {
+            if !ctx.contains(&self.animation_id) {
+                let animation = self.create_cursor_animation();
+                ctx.add(&self.animation_id, animation);
+            }
+            self.animation_registered = true;
         }
 
-        let now = Instant::now();
-        let last = self.last_blink.get_or_insert(now);
-        let elapsed = now.duration_since(*last).as_millis() as u64;
+        // Reset text modified flag
+        let was_modified = self.text_modified_this_tick;
+        self.text_modified_this_tick = false;
 
-        let toggle_time = if self.cursor_visible {
-            self.config.cursor_blink.on_duration_ms
+        // Check if we should pause due to typing
+        let should_pause = if was_modified {
+            true
+        } else if let Some(last_change) = self.last_text_change {
+            let idle_time_ms = last_change.elapsed().as_millis() as u64;
+            idle_time_ms < TYPING_IDLE_THRESHOLD_MS
         } else {
-            self.config.cursor_blink.off_duration_ms
+            false
         };
 
-        if elapsed >= toggle_time {
-            self.cursor_visible = !self.cursor_visible;
-            self.last_blink = Some(now);
-            true // Needs redraw
+        if should_pause {
+            // Pause animation and force full brightness
+            ctx.pause(&self.animation_id);
+            ctx.set_progress(&self.animation_id, 1.0);
+            let old_color = self.cursor_color;
+            self.cursor_color = Color::Rgb(255, 255, 255);
+            return old_color != Color::Rgb(255, 255, 255);
         } else {
+            // Resume animation
+            ctx.resume(&self.animation_id);
+            // Update cursor color from animation
+            if let Some(color) = ctx.current_color(&self.animation_id) {
+                let old_color = self.cursor_color;
+                self.cursor_color = color;
+                return old_color != color;
+            }
             false
         }
     }
@@ -839,12 +924,14 @@ impl Control for TextBox {
     }
 
     fn on_focus(&mut self) {
-        self.reset_blink();
+        // Reset to visible state
+        self.cursor_color = Color::Rgb(255, 255, 255);
         self.emit(TextBoxEvent::FocusGained);
     }
 
     fn on_blur(&mut self) {
-        self.cursor_visible = false;
+        // Hide cursor when not focused
+        self.cursor_color = Color::Rgb(0, 0, 0);
         self.emit(TextBoxEvent::FocusLost);
     }
 }

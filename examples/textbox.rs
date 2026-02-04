@@ -4,9 +4,13 @@
 //! - Two text boxes: username and password
 //! - Tab to switch focus between fields
 //! - Text input with cursor navigation
-//! - Cursor blinking when focused
+//! - Cursor animation (fade and blink modes)
 //! - Password masking
 //! - Event handling for submit (Enter key)
+//!
+//! Cursor Animation Modes:
+//! - Username: Fade cursor (smooth transition between dim and bright)
+//! - Password: Blink cursor (traditional on/off blinking)
 //!
 //! Controls:
 //! - Tab: Switch focus between text boxes
@@ -33,7 +37,9 @@ use ratatui::{
     Frame,
 };
 use tabitha::{
-    widget::{Control, TextBox, TextBoxConfig, TextBoxEvent},
+    widget::{
+        Control, CursorAnimationMode, CursorFadeConfig, TextBox, TextBoxConfig, TextBoxEvent,
+    },
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, HasFocus, KeyCode,
     MainUi,
 };
@@ -51,15 +57,26 @@ struct LoginForm {
 
 impl LoginForm {
     fn new() -> Self {
+        // Create username text box with fade animation
+        let username_config = TextBoxConfig {
+            cursor_mode: CursorAnimationMode::Fade,
+            cursor_fade: Some(CursorFadeConfig::default()),
+            ..TextBoxConfig::default()
+        };
+
         Self {
-            username: TextBox::new("username")
-                .with_title("Username")
-                .with_placeholder("Enter your username..."),
-            password: TextBox::new("password")
-                .with_title("Password")
-                .with_placeholder("Enter your password...")
-                .with_config(TextBoxConfig::password()),
-            status_message: "Press Tab to switch fields, Enter to submit".to_string(),
+            username: TextBox::builder("username")
+                .title("Username (fade cursor)")
+                .placeholder("Enter your username...")
+                .config(username_config)
+                .build(),
+            password: TextBox::builder("password")
+                .title("Password (blink cursor)")
+                .placeholder("Enter your password...")
+                .config(TextBoxConfig::password())
+                .build(),
+            status_message: "Tab to switch, Enter to submit | Top: fade cursor, Bottom: blink"
+                .to_string(),
             submitted_data: None,
         }
     }
@@ -215,10 +232,12 @@ impl Component for LoginForm {
         EventResult::Unhandled
     }
 
-    fn tick(&mut self, _ctx: &mut AppContext) {
+    fn tick(&mut self, ctx: &mut AppContext) {
         // Tick the text boxes for cursor blinking
-        self.username.tick();
-        self.password.tick();
+        if let Some(mut anim_ctx) = ctx.control_animations() {
+            self.username.tick(&mut anim_ctx);
+            self.password.tick(&mut anim_ctx);
+        }
     }
 }
 

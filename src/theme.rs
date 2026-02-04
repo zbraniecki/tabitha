@@ -16,6 +16,22 @@
 
 use ratatui::style::{Color, Style};
 
+/// Status levels for semantic status indicators.
+///
+/// Used with `Theme::status_style()` to get appropriate colors for
+/// health checks, monitoring dashboards, and state indicators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// Healthy/OK state (green)
+    Healthy,
+    /// Warning/degraded state (yellow)
+    Warning,
+    /// Error/failed state (red)
+    Error,
+    /// Unknown/indeterminate state (gray)
+    Unknown,
+}
+
 /// A theme containing semantic color roles for UI styling.
 ///
 /// Themes define colors for various UI states and elements:
@@ -56,6 +72,15 @@ pub struct Theme {
     pub highlight: Color,
     /// Foreground color when on highlight background.
     pub highlight_foreground: Color,
+
+    /// Status color for healthy/OK state.
+    pub status_healthy: Color,
+    /// Status color for warning/degraded state.
+    pub status_warning: Color,
+    /// Status color for error/failed state.
+    pub status_error: Color,
+    /// Status color for unknown/indeterminate state.
+    pub status_unknown: Color,
 }
 
 impl Default for Theme {
@@ -79,6 +104,11 @@ impl Default for Theme {
 
             highlight: Color::Yellow,
             highlight_foreground: Color::Black,
+
+            status_healthy: Color::Green,
+            status_warning: Color::Yellow,
+            status_error: Color::Red,
+            status_unknown: Color::DarkGray,
         }
     }
 }
@@ -112,6 +142,11 @@ impl Theme {
 
             highlight: to_grayscale(self.highlight),
             highlight_foreground: to_grayscale(self.highlight_foreground),
+
+            status_healthy: to_grayscale(self.status_healthy),
+            status_warning: to_grayscale(self.status_warning),
+            status_error: to_grayscale(self.status_error),
+            status_unknown: to_grayscale(self.status_unknown),
         }
     }
 
@@ -169,6 +204,24 @@ impl Theme {
     /// Returns a style with just the background color.
     pub fn bg_style(&self) -> Style {
         Style::default().bg(self.background)
+    }
+
+    /// Returns a style for the given status level.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let style = theme.status_style(Status::Healthy);
+    /// // Use for status indicators, health checks, etc.
+    /// ```
+    pub fn status_style(&self, status: Status) -> Style {
+        let color = match status {
+            Status::Healthy => self.status_healthy,
+            Status::Warning => self.status_warning,
+            Status::Error => self.status_error,
+            Status::Unknown => self.status_unknown,
+        };
+        Style::default().fg(color)
     }
 }
 

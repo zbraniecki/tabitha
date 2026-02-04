@@ -128,7 +128,7 @@ pub use tabs::{TabInfo, TabManager, TabMut, TabRef};
 pub use task::{Task, TaskContext, TaskHandle};
 pub use task_manager::{SpawnError, TaskManager, TaskManagerContext};
 pub use terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
-pub use theme::Theme;
+pub use theme::{Status, Theme};
 
 // The match_task_message macro is automatically exported at crate root by #[macro_export]
 

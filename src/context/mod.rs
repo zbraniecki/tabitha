@@ -8,6 +8,7 @@ pub mod traits;
 
 use ratatui::{layout::Rect, Frame};
 
+use crate::animation::{AnimationController, AnimationEventContext};
 use crate::event::Event;
 use crate::focus::{EventResult, FocusManager};
 use crate::tabs::{TabInfo, TabManager, TabMut, TabRef};
@@ -68,6 +69,7 @@ pub struct AppContext<'a> {
     pub(crate) focus_manager: &'a mut FocusManager,
     pub(crate) modal_manager: &'a mut ModalManager,
     pub(crate) task_manager: Option<&'a mut TaskManager>,
+    pub(crate) animation_controller: Option<&'a mut AnimationController>,
     pub(crate) should_quit: bool,
 }
 
@@ -86,6 +88,7 @@ impl<'a> AppContext<'a> {
             focus_manager,
             modal_manager,
             task_manager: None,
+            animation_controller: None,
             should_quit: false,
         }
     }
@@ -97,6 +100,7 @@ impl<'a> AppContext<'a> {
         focus_manager: &'a mut FocusManager,
         modal_manager: &'a mut ModalManager,
         task_manager: &'a mut TaskManager,
+        animation_controller: &'a mut AnimationController,
     ) -> Self {
         Self {
             terminal,
@@ -104,8 +108,18 @@ impl<'a> AppContext<'a> {
             focus_manager,
             modal_manager,
             task_manager: Some(task_manager),
+            animation_controller: Some(animation_controller),
             should_quit: false,
         }
+    }
+
+    /// Access the animation controller.
+    ///
+    /// Returns `None` if animations are not enabled for this app.
+    pub fn animations(&mut self) -> Option<AnimationEventContext<'_>> {
+        self.animation_controller
+            .as_mut()
+            .map(|controller| AnimationEventContext::new(controller))
     }
 }
 

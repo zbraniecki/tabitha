@@ -93,6 +93,7 @@
 //!     .build()?;
 //! ```
 
+pub mod animation;
 pub mod app;
 pub mod bus;
 pub mod component;
@@ -109,6 +110,9 @@ pub mod theme;
 pub mod widget;
 
 // Re-export main types at crate root for convenience
+pub use animation::{
+    Animation, AnimationController, AnimationEventContext, BlinkAnimation, SpinnerAnimation,
+};
 pub use app::{App, AppBuilder, AppError, BuildError};
 pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};
 pub use component::{BoxedComponent, Component, ComponentExt, MainUi};

@@ -666,8 +666,9 @@ impl Control for TextBox {
                 // Emit KeyDown event
                 self.emit(TextBoxEvent::KeyDown(key.code));
 
-                // Reset cursor blink on any key press
-                self.reset_blink();
+                // Note: reset_blink() is called only on text-modifying operations,
+                // not on navigation keys. This allows cursor to keep blinking
+                // when holding arrow keys.
 
                 let handled = match key.code {
                     // Character input
@@ -684,6 +685,7 @@ impl Control for TextBox {
                                 }
                                 'w' => {
                                     self.delete_word_back();
+                                    self.reset_blink();
                                     true
                                 }
                                 'u' => {
@@ -693,12 +695,14 @@ impl Control for TextBox {
                                     self.text = new_text;
                                     self.cursor_pos = 0;
                                     self.emit(TextBoxEvent::Changed(self.text.clone()));
+                                    self.reset_blink();
                                     true
                                 }
                                 'k' => {
                                     // Delete from cursor to end
                                     self.text = self.text.chars().take(self.cursor_pos).collect();
                                     self.emit(TextBoxEvent::Changed(self.text.clone()));
+                                    self.reset_blink();
                                     true
                                 }
                                 _ => false,
@@ -717,6 +721,7 @@ impl Control for TextBox {
                             }
                         } else {
                             self.insert_char(c);
+                            self.reset_blink();
                             true
                         }
                     }
@@ -760,10 +765,12 @@ impl Control for TextBox {
                         } else {
                             self.backspace();
                         }
+                        self.reset_blink();
                         true
                     }
                     KeyCode::Delete => {
                         self.delete_char();
+                        self.reset_blink();
                         true
                     }
 

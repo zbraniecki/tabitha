@@ -1,0 +1,612 @@
+//! Animation framework for the TUI library.
+//!
+//! This module provides a framework for animations with zero CPU overhead when paused.
+//!
+//! # Key Features
+//!
+//! - **Zero CPU when paused**: When animations are disabled, no tick events are generated
+//! - **Global speed control**: Adjust animation speed for all animations at once
+//! - **Built-in animations**: Blink and Spinner animations included
+//!
+//! # Example
+//!
+//! ```ignore
+//! use tabitha::animation::{AnimationController, BlinkAnimation};
+//! use std::time::Duration;
+//!
+//! let mut controller = AnimationController::new();
+//!
+//! // Add a blinking animation
+//! let blink = BlinkAnimation::new(Duration::from_millis(500));
+//! controller.add("cursor", blink);
+//!
+//! // In your event loop
+//! if controller.tick(Duration::from_millis(16)) {
+//!     // Request redraw - some animation changed
+//! }
+//! ```
+
+use std::collections::HashMap;
+use std::time::Duration;
+
+/// Trait for animations that can be managed by the AnimationController.
+///
+/// Implement this trait to create custom animations.
+pub trait Animation: Send {
+    /// Update animation state with adjusted elapsed time.
+    ///
+    /// Returns `true` if the animation state changed and a redraw is needed.
+    fn tick(&mut self, elapsed: Duration) -> bool;
+
+    /// Reset animation to initial state.
+    fn reset(&mut self);
+
+    /// Check if the animation is currently visible/active.
+    ///
+    /// Default implementation always returns `true`.
+    fn is_visible(&self) -> bool {
+        true
+    }
+
+    /// Check if the animation is complete.
+    ///
+    /// Default implementation returns `false` (animations loop forever).
+    fn is_complete(&self) -> bool {
+        false
+    }
+}
+
+/// Global controller for all animations in the app.
+///
+/// Key feature: **Zero CPU when paused** - no tick events generated when disabled.
+pub struct AnimationController {
+    /// Whether animations are currently enabled.
+    enabled: bool,
+    /// Global speed multiplier (1.0 = normal, 0.5 = half speed, 2.0 = double).
+    speed_multiplier: f32,
+    /// Registered animations by name.
+    animations: HashMap<String, Box<dyn Animation>>,
+}
+
+impl AnimationController {
+    /// Create a new animation controller.
+    ///
+    /// Animations are enabled by default.
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            speed_multiplier: 1.0,
+            animations: HashMap::new(),
+        }
+    }
+
+    /// Pause all animations (zero CPU usage).
+    ///
+    /// When paused, `tick()` returns `false` immediately without processing.
+    pub fn pause(&mut self) {
+        self.enabled = false;
+    }
+
+    /// Resume all animations.
+    pub fn resume(&mut self) {
+        self.enabled = true;
+    }
+
+    /// Check if animations are currently enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Toggle animation state.
+    pub fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+    }
+
+    /// Set global speed multiplier.
+    ///
+    /// Affects all animations. Use `1.0` for normal speed, `0.5` for half,
+    /// `2.0` for double.
+    pub fn set_speed(&mut self, multiplier: f32) {
+        self.speed_multiplier = multiplier.clamp(0.1, 10.0);
+    }
+
+    /// Get current speed multiplier.
+    pub fn speed_multiplier(&self) -> f32 {
+        self.speed_multiplier
+    }
+
+    /// Register an animation.
+    ///
+    /// If an animation with this ID already exists, it is replaced.
+    pub fn add(&mut self, id: impl Into<String>, animation: impl Animation + 'static) {
+        self.animations.insert(id.into(), Box::new(animation));
+    }
+
+    /// Remove an animation by ID.
+    ///
+    /// Returns `true` if the animation was found and removed.
+    pub fn remove(&mut self, id: &str) -> bool {
+        self.animations.remove(id).is_some()
+    }
+
+    /// Get a reference to an animation.
+    pub fn get(&self, id: &str) -> Option<&dyn Animation> {
+        self.animations.get(id).map(|a| a.as_ref())
+    }
+
+    /// Get a mutable reference to an animation.
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut (dyn Animation + '_)> {
+        if let Some(a) = self.animations.get_mut(id) {
+            Some(a.as_mut())
+        } else {
+            None
+        }
+    }
+
+    /// Check if an animation exists.
+    pub fn contains(&self, id: &str) -> bool {
+        self.animations.contains_key(id)
+    }
+
+    /// Get number of registered animations.
+    pub fn len(&self) -> usize {
+        self.animations.len()
+    }
+
+    /// Check if no animations are registered.
+    pub fn is_empty(&self) -> bool {
+        self.animations.is_empty()
+    }
+
+    /// Clear all animations.
+    pub fn clear(&mut self) {
+        self.animations.clear();
+    }
+
+    /// Tick all animations.
+    ///
+    /// Returns `true` if any animation changed state and needs a redraw.
+    ///
+    /// **When paused, this returns `false` immediately** (zero CPU).
+    pub fn tick(&mut self, elapsed: Duration) -> bool {
+        // Zero CPU when paused
+        if !self.enabled {
+            return false;
+        }
+
+        // Apply speed multiplier
+        let adjusted_elapsed = if self.speed_multiplier == 1.0 {
+            elapsed
+        } else {
+            Duration::from_nanos((elapsed.as_nanos() as f32 * self.speed_multiplier) as u64)
+        };
+
+        // Tick all animations
+        let mut needs_redraw = false;
+        for animation in self.animations.values_mut() {
+            if animation.tick(adjusted_elapsed) {
+                needs_redraw = true;
+            }
+        }
+
+        needs_redraw
+    }
+
+    /// Reset all animations to initial state.
+    pub fn reset_all(&mut self) {
+        for animation in self.animations.values_mut() {
+            animation.reset();
+        }
+    }
+
+    /// Get an iterator over animation IDs.
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.animations.keys().map(|s| s.as_str())
+    }
+}
+
+impl Default for AnimationController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Animation context available during event handling.
+///
+/// Access through `AppContext::animations()`.
+pub struct AnimationEventContext<'a> {
+    controller: &'a mut AnimationController,
+}
+
+impl<'a> AnimationEventContext<'a> {
+    /// Create a new animation context.
+    pub(crate) fn new(controller: &'a mut AnimationController) -> Self {
+        Self { controller }
+    }
+
+    /// Check if animations are enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.controller.is_enabled()
+    }
+
+    /// Pause animations.
+    pub fn pause(&mut self) {
+        self.controller.pause();
+    }
+
+    /// Resume animations.
+    pub fn resume(&mut self) {
+        self.controller.resume();
+    }
+
+    /// Toggle animation state.
+    pub fn toggle(&mut self) {
+        self.controller.toggle();
+    }
+
+    /// Set global speed multiplier.
+    pub fn set_speed(&mut self, multiplier: f32) {
+        self.controller.set_speed(multiplier);
+    }
+
+    /// Get speed multiplier.
+    pub fn speed_multiplier(&self) -> f32 {
+        self.controller.speed_multiplier()
+    }
+
+    /// Register an animation.
+    pub fn add(&mut self, id: impl Into<String>, animation: impl Animation + 'static) {
+        self.controller.add(id, animation);
+    }
+
+    /// Remove an animation.
+    pub fn remove(&mut self, id: &str) -> bool {
+        self.controller.remove(id)
+    }
+
+    /// Get an animation.
+    pub fn get(&self, id: &str) -> Option<&dyn Animation> {
+        self.controller.get(id)
+    }
+
+    /// Get a mutable animation.
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut (dyn Animation + '_)> {
+        self.controller.get_mut(id)
+    }
+
+    /// Check if animation exists.
+    pub fn contains(&self, id: &str) -> bool {
+        self.controller.contains(id)
+    }
+
+    /// Reset all animations.
+    pub fn reset_all(&mut self) {
+        self.controller.reset_all();
+    }
+
+    /// Clear all animations.
+    pub fn clear(&mut self) {
+        self.controller.clear();
+    }
+
+    /// Get number of animations.
+    pub fn len(&self) -> usize {
+        self.controller.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.controller.is_empty()
+    }
+}
+
+// =============================================================================
+// Standard Animations
+// =============================================================================
+
+/// A simple blinking animation.
+///
+/// Toggles between visible and hidden states at regular intervals.
+pub struct BlinkAnimation {
+    visible: bool,
+    elapsed: Duration,
+    interval: Duration,
+}
+
+impl BlinkAnimation {
+    /// Create a new blink animation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::animation::BlinkAnimation;
+    /// use std::time::Duration;
+    ///
+    /// // Blink every 500ms
+    /// let blink = BlinkAnimation::new(Duration::from_millis(500));
+    /// ```
+    pub fn new(interval: Duration) -> Self {
+        Self {
+            visible: true,
+            elapsed: Duration::ZERO,
+            interval,
+        }
+    }
+
+    /// Create with custom initial state.
+    pub fn with_initial_state(interval: Duration, initially_visible: bool) -> Self {
+        Self {
+            visible: initially_visible,
+            elapsed: Duration::ZERO,
+            interval,
+        }
+    }
+
+    /// Check if currently visible.
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    /// Set blink interval.
+    pub fn set_interval(&mut self, interval: Duration) {
+        self.interval = interval;
+    }
+
+    /// Get current interval.
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+}
+
+impl Animation for BlinkAnimation {
+    fn tick(&mut self, elapsed: Duration) -> bool {
+        self.elapsed += elapsed;
+
+        if self.elapsed >= self.interval {
+            self.elapsed -= self.interval;
+            self.visible = !self.visible;
+            true // State changed, needs redraw
+        } else {
+            false // No change
+        }
+    }
+
+    fn reset(&mut self) {
+        self.visible = true;
+        self.elapsed = Duration::ZERO;
+    }
+
+    fn is_visible(&self) -> bool {
+        self.visible
+    }
+}
+
+impl Default for BlinkAnimation {
+    fn default() -> Self {
+        Self::new(Duration::from_millis(500))
+    }
+}
+
+/// A spinner animation with rotating characters.
+///
+/// Cycles through a sequence of characters at regular intervals.
+pub struct SpinnerAnimation {
+    frames: &'static [char],
+    current: usize,
+    elapsed: Duration,
+    interval: Duration,
+}
+
+impl SpinnerAnimation {
+    /// Create a new spinner animation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::animation::SpinnerAnimation;
+    /// use std::time::Duration;
+    ///
+    /// // Classic spinner
+    /// let spinner = SpinnerAnimation::classic(Duration::from_millis(100));
+    ///
+    /// // Custom frames
+    /// const FRAMES: &[char] = &['◐', '◓', '◑', '◒'];
+    /// let spinner = SpinnerAnimation::new(FRAMES, Duration::from_millis(100));
+    /// ```
+    pub fn new(frames: &'static [char], interval: Duration) -> Self {
+        Self {
+            frames,
+            current: 0,
+            elapsed: Duration::ZERO,
+            interval,
+        }
+    }
+
+    /// Create a classic spinner: `|/-\`
+    pub fn classic(interval: Duration) -> Self {
+        const FRAMES: &[char] = &['|', '/', '-', '\\'];
+        Self::new(FRAMES, interval)
+    }
+
+    /// Create a dot spinner: `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`
+    pub fn dots(interval: Duration) -> Self {
+        const FRAMES: &[char] = &['�', '�', '�', '⠑', '⠉', '⠈', '⠐', '⠠'];
+        Self::new(FRAMES, interval)
+    }
+
+    /// Create a circle spinner: `◐◓◑◒`
+    pub fn circle(interval: Duration) -> Self {
+        const FRAMES: &[char] = &['◐', '◓', '◑', '◒'];
+        Self::new(FRAMES, interval)
+    }
+
+    /// Get current frame character.
+    pub fn current(&self) -> char {
+        self.frames[self.current]
+    }
+
+    /// Set animation interval.
+    pub fn set_interval(&mut self, interval: Duration) {
+        self.interval = interval;
+    }
+
+    /// Get current interval.
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// Get frame count.
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+}
+
+impl Animation for SpinnerAnimation {
+    fn tick(&mut self, elapsed: Duration) -> bool {
+        self.elapsed += elapsed;
+
+        if self.elapsed >= self.interval {
+            self.elapsed -= self.interval;
+            self.current = (self.current + 1) % self.frames.len();
+            true // State changed, needs redraw
+        } else {
+            false // No change
+        }
+    }
+
+    fn reset(&mut self) {
+        self.current = 0;
+        self.elapsed = Duration::ZERO;
+    }
+}
+
+impl Default for SpinnerAnimation {
+    fn default() -> Self {
+        Self::classic(Duration::from_millis(100))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_animation_controller_enabled_by_default() {
+        let controller = AnimationController::new();
+        assert!(controller.is_enabled());
+        assert_eq!(controller.speed_multiplier(), 1.0);
+    }
+
+    #[test]
+    fn test_animation_controller_pause_resume() {
+        let mut controller = AnimationController::new();
+
+        controller.pause();
+        assert!(!controller.is_enabled());
+
+        controller.resume();
+        assert!(controller.is_enabled());
+    }
+
+    #[test]
+    fn test_animation_controller_zero_cpu_when_paused() {
+        let mut controller = AnimationController::new();
+        controller.add("test", BlinkAnimation::default());
+
+        // When paused, tick should return false immediately
+        controller.pause();
+        assert!(!controller.tick(Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn test_blink_animation() {
+        let mut blink = BlinkAnimation::new(Duration::from_millis(100));
+
+        // Initially visible
+        assert!(blink.is_visible());
+
+        // After 50ms, still visible
+        assert!(!blink.tick(Duration::from_millis(50)));
+        assert!(blink.is_visible());
+
+        // After another 60ms (total 110ms), should toggle
+        assert!(blink.tick(Duration::from_millis(60)));
+        assert!(!blink.is_visible());
+
+        // After another 100ms, should toggle back
+        assert!(blink.tick(Duration::from_millis(100)));
+        assert!(blink.is_visible());
+    }
+
+    #[test]
+    fn test_blink_animation_reset() {
+        let mut blink = BlinkAnimation::new(Duration::from_millis(100));
+
+        // Toggle to invisible
+        blink.tick(Duration::from_millis(150));
+        assert!(!blink.is_visible());
+
+        // Reset
+        blink.reset();
+        assert!(blink.is_visible());
+    }
+
+    #[test]
+    fn test_spinner_animation() {
+        let mut spinner = SpinnerAnimation::classic(Duration::from_millis(100));
+
+        // Initially at frame 0
+        assert_eq!(spinner.current(), '|');
+
+        // After 100ms, advance to next frame
+        assert!(spinner.tick(Duration::from_millis(100)));
+        assert_eq!(spinner.current(), '/');
+
+        // After another 100ms, advance to next frame
+        assert!(spinner.tick(Duration::from_millis(100)));
+        assert_eq!(spinner.current(), '-');
+
+        // After another 100ms, advance to next frame
+        assert!(spinner.tick(Duration::from_millis(100)));
+        assert_eq!(spinner.current(), '\\');
+
+        // After another 100ms, wrap back to first frame
+        assert!(spinner.tick(Duration::from_millis(100)));
+        assert_eq!(spinner.current(), '|');
+    }
+
+    #[test]
+    fn test_speed_multiplier() {
+        let mut controller = AnimationController::new();
+        controller.add("blink", BlinkAnimation::new(Duration::from_millis(100)));
+
+        // Set half speed - animations should take twice as long
+        controller.set_speed(0.5);
+        assert_eq!(controller.speed_multiplier(), 0.5);
+
+        // At half speed, 100ms of real time = 50ms of animation time
+        // So after 100ms, no change yet
+        assert!(!controller.tick(Duration::from_millis(100)));
+
+        // After another 100ms (total 200ms real = 100ms animation), should change
+        assert!(controller.tick(Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn test_animation_registration() {
+        let mut controller = AnimationController::new();
+
+        assert!(!controller.contains("test"));
+        assert_eq!(controller.len(), 0);
+
+        controller.add("test", BlinkAnimation::default());
+
+        assert!(controller.contains("test"));
+        assert_eq!(controller.len(), 1);
+
+        controller.remove("test");
+
+        assert!(!controller.contains("test"));
+        assert_eq!(controller.len(), 0);
+    }
+}

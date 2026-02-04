@@ -164,30 +164,38 @@ impl Component for LoginForm {
 
         // Handle tab navigation
         if event.is_key(KeyCode::Tab) {
+            // Get current focus for debugging
+            let old_focus = ctx.focus().focused_id().map(|s| s.to_string());
+
             // Notify current control of blur
-            let current_focus = ctx.focus().focused_id().map(|s| s.to_string());
-            if let Some(ref id) = current_focus {
+            if let Some(ref id) = old_focus {
                 if let Some(control) = self.focused_control(Some(id)) {
                     control.on_blur();
-                    // Process any blur events
                     let events = control.take_events();
                     self.process_events(id, events);
                 }
             }
 
             // Move focus
-            ctx.focus().focus_next();
+            let moved = ctx.focus().focus_next();
+
+            // Get new focus for debugging
+            let new_focus = ctx.focus().focused_id().map(|s| s.to_string());
 
             // Notify new control of focus
-            let new_focus = ctx.focus().focused_id().map(|s| s.to_string());
             if let Some(ref id) = new_focus {
                 if let Some(control) = self.focused_control(Some(id)) {
                     control.on_focus();
-                    // Process any focus events
                     let events = control.take_events();
                     self.process_events(id, events);
                 }
             }
+
+            // Update status with focus change info
+            self.status_message = format!(
+                "Focus: {:?} -> {:?} (moved: {})",
+                old_focus, new_focus, moved
+            );
 
             return EventResult::Handled;
         }

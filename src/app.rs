@@ -11,6 +11,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
+use crate::animation::AnimationController;
 use crate::bus::{MessageBus, MessageBusReceiver, TaskMessage, TaskSender};
 use crate::component::{Component, MainUi};
 use crate::context::traits::CanQuit;
@@ -289,6 +290,7 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             tab_manager: self.tab_manager,
             focus_manager: self.focus_manager,
             modal_manager: self.modal_manager,
+            animation_controller: AnimationController::new(),
             theme: self.theme,
             tick_rate: self.tick_rate,
             terminal_config: TerminalConfig {
@@ -335,6 +337,7 @@ pub struct App<M: MainUi> {
     tab_manager: TabManager,
     focus_manager: FocusManager,
     modal_manager: ModalManager,
+    animation_controller: AnimationController,
     theme: Theme,
     tick_rate: Option<Duration>,
     terminal_config: TerminalConfig,
@@ -463,7 +466,7 @@ impl<M: MainUi + 'static> App<M> {
         let task_tx = event_tx.clone();
 
         // Spawn event source tasks
-        let mut input_handle = tokio::spawn(Self::input_processor(input_tx, self.tick_rate));
+        let mut input_handle = tokio::spawn(Self::input_processor(input_tx));
 
         let mut task_handle = tokio::spawn(Self::task_coordinator(task_tx, message_rx));
 
@@ -507,53 +510,61 @@ impl<M: MainUi + 'static> App<M> {
     ///
     /// Reads terminal events and sends them as AppEvent::Terminal.
     /// Also handles tick events when tick_rate is set.
-    async fn input_processor(
-        event_tx: mpsc::Sender<AppEvent>,
-        tick_rate: Option<Duration>,
-    ) -> Result<(), AppError> {
+    ///
+    /// Implements rate limiting: key events are throttled to prevent saturating
+    /// the event channel and blocking animation ticks when holding keys.
+    async fn input_processor(event_tx: mpsc::Sender<AppEvent>) -> Result<(), AppError> {
+        use tokio::time::Instant;
+
         let mut event_stream = EventStream::new();
-        let mut tick_interval = tick_rate.map(tokio::time::interval);
+
+        // Rate limiting state
+        const MIN_KEY_INTERVAL_MS: u64 = 16; // ~60fps max for key events
+        let mut last_key_time: Option<Instant> = None;
 
         loop {
-            tokio::select! {
-                biased;
+            match event_stream.next().await {
+                Some(Ok(crossterm_event)) => {
+                    let event = Event::from(crossterm_event);
+                    tracing::trace!(?event, "input_processor: received terminal event");
 
-                // Terminal events
-                event = event_stream.next() => {
-                    match event {
-                        Some(Ok(crossterm_event)) => {
-                            let event = Event::from(crossterm_event);
-                            tracing::trace!(?event, "input_processor: received terminal event");
+                    // For key events, apply rate limiting
+                    if matches!(event, Event::Key(_)) {
+                        let now = Instant::now();
 
-                            // Send the event. Dev console toggle is handled in main_loop.
-                            event_tx.send(AppEvent::Terminal(event)).await
-                                .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
+                        // Check if enough time has passed since last key event
+                        if let Some(last_time) = last_key_time {
+                            let elapsed = now.duration_since(last_time);
+                            if elapsed < Duration::from_millis(MIN_KEY_INTERVAL_MS) {
+                                // Rate limit: drop this key event
+                                tracing::trace!(
+                                    elapsed_ms = elapsed.as_millis(),
+                                    "input_processor: rate limiting key event"
+                                );
+                                continue;
+                            }
                         }
-                        Some(Err(e)) => return Err(AppError::Io(e)),
-                        None => {
-                            tracing::trace!("input_processor: event stream ended");
-                            return Ok(());
-                        }
+
+                        // Update last key time and send the event
+                        last_key_time = Some(now);
+                        event_tx
+                            .send(AppEvent::Terminal(event))
+                            .await
+                            .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
+                    } else {
+                        // Non-key events (resize, mouse, focus) sent immediately
+                        event_tx
+                            .send(AppEvent::Terminal(event))
+                            .await
+                            .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
                     }
                 }
-
-                // Tick timer (only enabled if tick_rate is set)
-                _ = Self::tick_future(&mut tick_interval), if tick_interval.is_some() => {
-                    tracing::trace!("input_processor: tick");
-                    event_tx.send(AppEvent::Tick).await
-                        .map_err(|_| AppError::Runtime(RuntimeError::EventChannelClosed))?;
+                Some(Err(e)) => return Err(AppError::Io(e)),
+                None => {
+                    tracing::trace!("input_processor: event stream ended");
+                    return Ok(());
                 }
             }
-        }
-    }
-
-    /// Helper to tick the interval if it exists.
-    ///
-    /// This helper allows using the `if` condition in `select!` with a consistent
-    /// future type, avoiding the type mismatch between `interval.tick()` and `pending()`.
-    async fn tick_future(interval: &mut Option<tokio::time::Interval>) {
-        if let Some(ref mut i) = interval {
-            i.tick().await;
         }
     }
 
@@ -587,6 +598,9 @@ impl<M: MainUi + 'static> App<M> {
     /// Main event loop.
     ///
     /// Processes unified AppEvents from all sources.
+    ///
+    /// Animation ticks are tracked independently using elapsed time, ensuring
+    /// they fire at the correct rate regardless of event processing.
     async fn main_loop(
         &mut self,
         terminal: &mut Terminal,
@@ -594,8 +608,14 @@ impl<M: MainUi + 'static> App<M> {
         task_manager: &mut TaskManager,
         build_time_handles: &mut Vec<TaskHandle>,
     ) -> Result<(), AppError> {
+        use tokio::time::Instant;
+
         let mut event_rx = event_rx;
         let mut should_quit = false;
+
+        // Animation timing - tracked manually to ensure ticks happen at the right rate
+        let tick_duration = self.tick_rate;
+        let mut last_tick = Instant::now();
 
         // Call on_mount for main_ui before starting the event loop
         {
@@ -607,23 +627,69 @@ impl<M: MainUi + 'static> App<M> {
             // Clean up finished runtime tasks periodically
             task_manager.cleanup_finished();
 
-            // Receive next event
-            let event = match event_rx.recv().await {
-                Some(event) => event,
-                None => {
-                    tracing::trace!("main_loop: event channel closed");
-                    break;
+            let mut needs_redraw = false;
+
+            // Calculate how long until next tick (or wait indefinitely if no animations)
+            let wait_duration = tick_duration.map(|d| {
+                let elapsed = last_tick.elapsed();
+                if elapsed >= d {
+                    Duration::ZERO
+                } else {
+                    d - elapsed
                 }
+            });
+
+            // Wait for either an event or the next tick time
+            let event = if let Some(wait) = wait_duration {
+                if wait.is_zero() {
+                    // Tick is due now, don't wait - just check for events non-blocking
+                    event_rx.try_recv().ok()
+                } else {
+                    tokio::select! {
+                        biased;
+
+                        // Timeout for next animation tick
+                        _ = tokio::time::sleep(wait) => None,
+
+                        // Event from channel
+                        event = event_rx.recv() => event,
+                    }
+                }
+            } else {
+                // No animations - just wait for events
+                event_rx.recv().await
             };
 
-            // Process the event
-            let mut needs_redraw = self.process_app_event(
-                event,
-                terminal,
-                task_manager,
-                build_time_handles,
-                &mut should_quit,
-            )?;
+            // Process the event if we got one
+            if let Some(event) = event {
+                needs_redraw |= self.process_app_event(
+                    event,
+                    terminal,
+                    task_manager,
+                    build_time_handles,
+                    &mut should_quit,
+                )?;
+            } else if wait_duration.is_none() {
+                // Channel closed and no animations
+                tracing::trace!("main_loop: event channel closed");
+                break;
+            }
+
+            // Always check if animation tick is due (after processing event)
+            // This ensures ticks happen even when events are queued
+            if let Some(d) = tick_duration {
+                if last_tick.elapsed() >= d {
+                    tracing::trace!("main_loop: animation tick");
+                    last_tick = Instant::now();
+                    needs_redraw |= self.process_app_event(
+                        AppEvent::Tick,
+                        terminal,
+                        task_manager,
+                        build_time_handles,
+                        &mut should_quit,
+                    )?;
+                }
+            }
 
             // Poll log receiver and feed logs to dev console
             if let Some(ref mut log_rx) = self.log_rx {
@@ -669,6 +735,7 @@ impl<M: MainUi + 'static> App<M> {
                     &mut self.focus_manager,
                     &mut self.modal_manager,
                     task_manager,
+                    &mut self.animation_controller,
                 );
                 let redraw = self.main_ui.handle_task_message(
                     task_message.task_name,
@@ -679,12 +746,17 @@ impl<M: MainUi + 'static> App<M> {
                 Ok(redraw)
             }
             AppEvent::Tick => {
+                // Tick animations first
+                let tick_duration = self.tick_rate.unwrap_or(Duration::from_millis(16));
+                let _needs_redraw = self.animation_controller.tick(tick_duration);
+
                 let mut ctx = AppContext::with_task_manager(
                     terminal,
                     &mut self.tab_manager,
                     &mut self.focus_manager,
                     &mut self.modal_manager,
                     task_manager,
+                    &mut self.animation_controller,
                 );
                 self.main_ui.tick(&mut ctx);
                 *should_quit = ctx.should_quit();
@@ -722,6 +794,7 @@ impl<M: MainUi + 'static> App<M> {
                 &mut self.focus_manager,
                 &mut self.modal_manager,
                 task_manager,
+                &mut self.animation_controller,
             );
             let result = if modal_consumed {
                 self.main_ui.handle_event(event, &mut ctx);

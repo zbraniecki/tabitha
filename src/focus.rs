@@ -292,7 +292,8 @@ impl FocusManager {
 
     /// Navigate to the next sibling at the current level.
     ///
-    /// Returns `true` if focus moved, `false` if at end of list.
+    /// Returns `true` if focus moved. Wraps around to the first element
+    /// when at the last sibling.
     pub fn next_sibling(&mut self) -> bool {
         let current_id = match self.focused_id() {
             Some(id) => id.to_string(),
@@ -300,21 +301,26 @@ impl FocusManager {
         };
 
         let siblings = self.get_siblings(&current_id);
+        if siblings.is_empty() {
+            return false;
+        }
+
         let current_index = siblings.iter().position(|id| id == &current_id);
 
-        match current_index {
-            Some(idx) if idx + 1 < siblings.len() => {
-                let next_id = siblings[idx + 1].clone();
-                self.update_focus_leaf(&next_id);
-                true
-            }
-            _ => false,
-        }
+        let next_idx = match current_index {
+            Some(idx) => (idx + 1) % siblings.len(),
+            None => 0,
+        };
+
+        let next_id = siblings[next_idx].clone();
+        self.update_focus_leaf(&next_id);
+        true
     }
 
     /// Navigate to the previous sibling at the current level.
     ///
-    /// Returns `true` if focus moved, `false` if at start of list.
+    /// Returns `true` if focus moved. Wraps around to the last element
+    /// when at the first sibling.
     pub fn prev_sibling(&mut self) -> bool {
         let current_id = match self.focused_id() {
             Some(id) => id.to_string(),
@@ -322,16 +328,21 @@ impl FocusManager {
         };
 
         let siblings = self.get_siblings(&current_id);
+        if siblings.is_empty() {
+            return false;
+        }
+
         let current_index = siblings.iter().position(|id| id == &current_id);
 
-        match current_index {
-            Some(idx) if idx > 0 => {
-                let prev_id = siblings[idx - 1].clone();
-                self.update_focus_leaf(&prev_id);
-                true
-            }
-            _ => false,
-        }
+        let prev_idx = match current_index {
+            Some(0) => siblings.len() - 1,
+            Some(idx) => idx - 1,
+            None => siblings.len() - 1,
+        };
+
+        let prev_id = siblings[prev_idx].clone();
+        self.update_focus_leaf(&prev_id);
+        true
     }
 
     fn get_siblings(&self, id: &str) -> Vec<String> {
@@ -460,7 +471,8 @@ mod tests {
         assert_eq!(fm.focused_id(), Some("password"));
         assert!(fm.next_sibling());
         assert_eq!(fm.focused_id(), Some("submit"));
-        assert!(!fm.next_sibling()); // At end
+        assert!(fm.next_sibling()); // Wraps to first
+        assert_eq!(fm.focused_id(), Some("username"));
 
         // Exit to parent
         assert!(fm.focus_out());
@@ -498,6 +510,18 @@ mod tests {
         assert_eq!(fm.focused_id(), Some("b"));
 
         fm.focus_prev();
+        assert_eq!(fm.focused_id(), Some("a"));
+
+        // Test backward wraparound
+        fm.focus_prev(); // Wraps from a to c
+        assert_eq!(fm.focused_id(), Some("c"));
+
+        fm.focus_prev();
+        assert_eq!(fm.focused_id(), Some("b"));
+
+        // Test forward wraparound
+        fm.set_focus("c");
+        fm.focus_next(); // Wraps from c to a
         assert_eq!(fm.focused_id(), Some("a"));
     }
 }

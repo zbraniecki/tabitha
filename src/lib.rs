@@ -112,8 +112,8 @@ pub mod widget;
 
 // Re-export main types at crate root for convenience
 pub use animation::{
-    Animation, AnimationController, AnimationEventContext, BlinkAnimation, ControlAnimationContext,
-    FadeAnimation, FadeDirection, SpinnerAnimation,
+    Animation, AnimationController, AnimationEventContext, AnimationMode, BlinkAnimation,
+    ControlAnimationContext, FadeAnimation, FadeDirection, SpinnerAnimation,
 };
 pub use app::{App, AppBuilder, AppError, BuildError};
 pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};

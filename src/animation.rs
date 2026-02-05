@@ -29,6 +29,39 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// Animation mode for controlling animation intensity across the application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnimationMode {
+    /// Full animations - all effects enabled at normal speed
+    #[default]
+    Full,
+    /// Reduced animations - minimal effects, faster transitions
+    Reduced,
+    /// No animations - instant transitions, static display
+    None,
+}
+
+impl AnimationMode {
+    /// Check if animations are completely disabled
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    /// Check if in reduced mode
+    pub fn is_reduced(&self) -> bool {
+        matches!(self, Self::Reduced)
+    }
+
+    /// Get speed multiplier for this mode
+    pub fn speed_multiplier(&self) -> f32 {
+        match self {
+            Self::Full => 1.0,
+            Self::Reduced => 2.0, // 2x faster
+            Self::None => 0.0,
+        }
+    }
+}
+
 /// Trait for animations that can be managed by the AnimationController.
 ///
 /// Implement this trait to create custom animations.
@@ -111,6 +144,8 @@ pub struct AnimationController {
     enabled: bool,
     /// Global speed multiplier (1.0 = normal, 0.5 = half speed, 2.0 = double).
     speed_multiplier: f32,
+    /// Animation mode for controlling intensity.
+    mode: AnimationMode,
     /// Registered animations by name.
     animations: HashMap<String, Box<dyn Animation>>,
 }
@@ -120,6 +155,7 @@ impl std::fmt::Debug for AnimationController {
         f.debug_struct("AnimationController")
             .field("enabled", &self.enabled)
             .field("speed_multiplier", &self.speed_multiplier)
+            .field("mode", &self.mode)
             .field("animations", &self.animations.len())
             .finish()
     }
@@ -128,11 +164,12 @@ impl std::fmt::Debug for AnimationController {
 impl AnimationController {
     /// Create a new animation controller.
     ///
-    /// Animations are enabled by default.
+    /// Animations are enabled by default in Full mode.
     pub fn new() -> Self {
         Self {
             enabled: true,
             speed_multiplier: 1.0,
+            mode: AnimationMode::Full,
             animations: HashMap::new(),
         }
     }
@@ -151,13 +188,41 @@ impl AnimationController {
 
     /// Check if animations are currently enabled.
     pub fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled && !self.mode.is_disabled()
     }
 
     /// Toggle animation state.
     pub fn toggle(&mut self) {
         self.enabled = !self.enabled;
     }
+
+    /// Get the current animation mode.
+    pub fn mode(&self) -> AnimationMode {
+        self.mode
+    }
+
+    /// Set the animation mode.
+    pub fn set_mode(&mut self, mode: AnimationMode) {
+        self.mode = mode;
+        // Auto-enable/disable based on mode
+        self.enabled = !mode.is_disabled();
+    }
+
+    /// Cycle to the next animation mode (Full -> Reduced -> None -> Full).
+    pub fn cycle_mode(&mut self) -> AnimationMode {
+        self.mode = match self.mode {
+            AnimationMode::Full => AnimationMode::Reduced,
+            AnimationMode::Reduced => AnimationMode::None,
+            AnimationMode::None => AnimationMode::Full,
+        };
+        self.enabled = !self.mode.is_disabled();
+        self.mode
+    }
+
+    /// Set global speed multiplier.
+    ///
+    /// Affects all animations. Use `1.0` for normal speed, `0.5` for half,
+    /// `2.0` for double.
 
     /// Set global speed multiplier.
     ///
@@ -226,16 +291,19 @@ impl AnimationController {
     ///
     /// **When paused, this returns `false` immediately** (zero CPU).
     pub fn tick(&mut self, elapsed: Duration) -> bool {
-        // Zero CPU when paused
-        if !self.enabled {
+        // Zero CPU when paused or disabled
+        if !self.enabled || self.mode.is_disabled() {
             return false;
         }
 
-        // Apply speed multiplier
-        let adjusted_elapsed = if self.speed_multiplier == 1.0 {
+        // Combine mode speed multiplier with global speed multiplier
+        let total_multiplier = self.speed_multiplier * self.mode.speed_multiplier();
+
+        // Apply combined speed multiplier
+        let adjusted_elapsed = if total_multiplier == 1.0 {
             elapsed
         } else {
-            Duration::from_nanos((elapsed.as_nanos() as f32 * self.speed_multiplier) as u64)
+            Duration::from_nanos((elapsed.as_nanos() as f32 * total_multiplier) as u64)
         };
 
         // Tick all animations
@@ -507,6 +575,21 @@ impl<'a> ControlAnimationContext<'a> {
     /// Get the global speed multiplier.
     pub fn speed_multiplier(&self) -> f32 {
         self.controller.speed_multiplier()
+    }
+
+    /// Get the current animation mode.
+    pub fn mode(&self) -> AnimationMode {
+        self.controller.mode()
+    }
+
+    /// Set the animation mode.
+    pub fn set_mode(&mut self, mode: AnimationMode) {
+        self.controller.set_mode(mode);
+    }
+
+    /// Cycle to the next animation mode (Full -> Reduced -> None -> Full).
+    pub fn cycle_mode(&mut self) -> AnimationMode {
+        self.controller.cycle_mode()
     }
 }
 

@@ -191,10 +191,9 @@ impl SidebarState {
             // No animation, apply immediately
             self.width = width;
             self.update_effective_width();
-        } else {
-            // Animation will happen in tick()
-            self.visibility = SidebarVisibility::Transitioning;
         }
+        // Animation will happen in tick() - width animation is handled separately
+        // Don't change visibility state here, as that triggers show/hide animation
     }
 
     /// Toggle sidebar visibility.
@@ -258,6 +257,12 @@ impl SidebarState {
     pub fn hide(&mut self) {
         if self.visibility == SidebarVisibility::Hidden {
             return;
+        }
+
+        // Complete any ongoing width animation immediately
+        if self.width != self.target_width {
+            self.width = self.target_width;
+            self.effective_width_percent = self.constraint_to_percent(self.width);
         }
 
         if !self.animations_enabled || self.animation_controller.is_none() {
@@ -484,30 +489,8 @@ impl SidebarState {
 
         let mut needs_redraw = false;
 
-        // Handle width animation
-        if self.width != self.target_width && self.visibility != SidebarVisibility::Hidden {
-            // Animate towards target width
-            let target_percent = self.constraint_to_percent(self.target_width);
-            let current_percent = self.effective_width_percent;
-
-            let delta = target_percent - current_percent;
-            let step =
-                delta * (elapsed.as_millis() as f32 / self.animation_duration.as_millis() as f32);
-
-            if step.abs() < 0.1 || elapsed >= self.animation_duration {
-                // Animation complete
-                self.effective_width_percent = target_percent;
-                self.width = self.target_width;
-                if self.visibility == SidebarVisibility::Transitioning {
-                    self.visibility = SidebarVisibility::Visible;
-                }
-            } else {
-                self.effective_width_percent += step;
-            }
-            needs_redraw = true;
-        }
-
-        // Handle show/hide animation
+        // Priority 1: Handle show/hide animation first
+        // This takes precedence over width changes
         if self.visibility == SidebarVisibility::Transitioning {
             let target_percent = if self.effective_visible {
                 self.constraint_to_percent(self.target_width)
@@ -526,6 +509,8 @@ impl SidebarState {
                 if step.abs() < 0.1 || current_percent >= target_percent {
                     self.effective_width_percent = target_percent;
                     self.visibility = SidebarVisibility::Visible;
+                    // Update width to match target after show completes
+                    self.width = self.target_width;
                 } else {
                     self.effective_width_percent += step;
                 }
@@ -540,6 +525,25 @@ impl SidebarState {
                 } else {
                     self.effective_width_percent += step;
                 }
+            }
+            needs_redraw = true;
+        }
+        // Priority 2: Handle width animation only when not transitioning
+        else if self.width != self.target_width && self.visibility != SidebarVisibility::Hidden {
+            // Animate towards target width
+            let target_percent = self.constraint_to_percent(self.target_width);
+            let current_percent = self.effective_width_percent;
+
+            let delta = target_percent - current_percent;
+            let step =
+                delta * (elapsed.as_millis() as f32 / self.animation_duration.as_millis() as f32);
+
+            if step.abs() < 0.1 || elapsed >= self.animation_duration {
+                // Animation complete
+                self.effective_width_percent = target_percent;
+                self.width = self.target_width;
+            } else {
+                self.effective_width_percent += step;
             }
             needs_redraw = true;
         }

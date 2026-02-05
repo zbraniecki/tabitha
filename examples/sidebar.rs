@@ -16,7 +16,6 @@
 //! - [ ]: Decrease/increase sidebar width
 //! - l/r: Move sidebar to left/right side
 //! - t: Toggle layout mode (tabbar full width vs inside content)
-//! - a: Toggle animations
 //! - q/Ctrl+C: Quit
 
 #[path = "_common/mod.rs"]
@@ -31,9 +30,7 @@ use ratatui::{
     Frame,
 };
 use std::time::{Duration, Instant};
-use tabitha::widget::{
-    Control, IndeterminateStyle, LabelPosition, ProgressBar, TabBar, TabContent,
-};
+use tabitha::widget::{TabBar, TabContent};
 use tabitha::{
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, KeyCode, MainUi,
     Side, Sidebar, SidebarState,
@@ -135,9 +132,7 @@ enum LayoutMode {
 struct SidebarApp {
     sidebar_state: SidebarState,
     todo_list: TodoList,
-    progress_bar: ProgressBar,
     width_level: u8,
-    animation_enabled: bool,
     layout_mode: LayoutMode,
     last_tick: Instant,
 }
@@ -149,19 +144,10 @@ impl SidebarApp {
             .with_animations(true)
             .with_animation_duration(Duration::from_millis(200));
 
-        // Create an indeterminate progress bar for "thinking" simulation
-        let progress_bar = ProgressBar::indeterminate()
-            .with_label("Thinking...")
-            .with_label_position(LabelPosition::Left)
-            .with_indeterminate_style(IndeterminateStyle::BackAndForth)
-            .with_animation_duration(Duration::from_millis(600));
-
         Self {
             sidebar_state,
             todo_list: TodoList::new(),
-            progress_bar,
             width_level: 1, // 0=15%, 1=25%, 2=35%
-            animation_enabled: true,
             layout_mode: LayoutMode::TabbarFullWidth,
             last_tick: Instant::now(),
         }
@@ -307,13 +293,6 @@ impl Component for SidebarApp {
                     self.toggle_layout_mode();
                     EventResult::Handled
                 }
-                // Toggle animations
-                KeyCode::Char('a') => {
-                    self.animation_enabled = !self.animation_enabled;
-                    self.sidebar_state
-                        .set_animations_enabled(self.animation_enabled);
-                    EventResult::Handled
-                }
                 _ => EventResult::Unhandled,
             }
         } else {
@@ -321,17 +300,12 @@ impl Component for SidebarApp {
         }
     }
 
-    fn tick(&mut self, ctx: &mut AppContext) {
+    fn tick(&mut self, _ctx: &mut AppContext) {
         // Update sidebar animations with elapsed time since last tick
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_tick);
         self.last_tick = now;
         self.sidebar_state.tick(elapsed);
-
-        // Update progress bar animation if animations are enabled
-        if let Some(mut anim_ctx) = ctx.control_animations() {
-            self.progress_bar.tick(&mut anim_ctx);
-        }
     }
 }
 
@@ -365,9 +339,8 @@ impl SidebarApp {
             "Sidebar: {}\n\
             Side: {:?}\n\
             Width: {}\n\
-            Layout: {:?}\n\
-            Animation: {}\n\n\
-            Todo List:\n",
+            Layout: {:?}\n\n\
+            Todo List:",
             if self.sidebar_state.is_visible() {
                 "open"
             } else {
@@ -381,27 +354,17 @@ impl SidebarApp {
                 _ => "Medium",
             },
             self.layout_mode,
-            if self.animation_enabled { "On" } else { "Off" },
         );
 
         let status_para = Paragraph::new(status_text).style(Style::default().fg(Color::White));
         frame.render_widget(status_para, sidebar_inner);
 
-        // Draw progress bar (thinking indicator)
-        let progress_area = Rect {
-            x: sidebar_inner.x,
-            y: sidebar_inner.y + 7, // After status text
-            width: sidebar_inner.width,
-            height: 1,
-        };
-        self.progress_bar.draw(frame, progress_area, false);
-
-        // Draw todo list below progress bar if there's room
+        // Draw todo list below status if there's room
         let todo_area = Rect {
             x: sidebar_inner.x,
-            y: sidebar_inner.y + 9, // Offset for status text + progress bar + padding
+            y: sidebar_inner.y + 7, // Offset for status text
             width: sidebar_inner.width,
-            height: sidebar_inner.height.saturating_sub(9),
+            height: sidebar_inner.height.saturating_sub(7),
         };
 
         if todo_area.height > 0 {
@@ -410,7 +373,7 @@ impl SidebarApp {
     }
 
     fn draw_footer(&self, frame: &mut Frame, area: Rect) {
-        let controls = "b: Toggle Sidebar | Tab: Tab | 1-3: Tab | [ ]: Width | l/r: Side | t: Layout | a: Anim | q: Quit";
+        let controls = "b: Toggle Sidebar | Tab: Tab | 1-3: Tab | [ ]: Width | l/r: Side | t: Layout | q: Quit";
 
         let footer = Paragraph::new(controls)
             .style(Style::default().fg(Color::DarkGray))
@@ -437,7 +400,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  [ ]: Decrease/increase sidebar width");
     println!("  l/r: Move sidebar to left/right");
     println!("  t: Toggle layout mode");
-    println!("  a: Toggle animations");
     println!("  q: Quit");
     println!();
 
@@ -455,12 +417,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "home",
                 "Home",
                 "Welcome to the Sidebar Demo!\n\n\
-            This example demonstrates:\n\
-            • Sidebar with fixed Todo List\n\
-            • Tabs control main content only\n\
-            • Animated sidebar transitions\n\
-            • Configurable width and position\n\n\
-            The sidebar stays the same regardless of which tab is active.",
+                This example demonstrates:\n\
+                • Sidebar with fixed Todo List\n\
+                • Tabs control main content only\n\
+                • Animated sidebar transitions\n\
+                • Configurable width and position\n\n\
+                The sidebar stays the same regardless of which tab is active.",
             ),
         )
         .add_tab(
@@ -470,9 +432,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "files",
                 "Files",
                 "📁 src/\n  📄 lib.rs\n  📄 main.rs\n  📄 sidebar.rs\n\
-            📁 examples/\n  📄 sidebar.rs\n  📄 tabs.rs\n\
-            📄 Cargo.toml\n📄 README.md\n\n\
-            The sidebar still shows the Todo List!",
+                📁 examples/\n  📄 sidebar.rs\n  📄 tabs.rs\n\
+                📄 Cargo.toml\n📄 README.md\n\n\
+                The sidebar still shows the Todo List!",
             ),
         )
         .add_tab(
@@ -482,12 +444,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "settings",
                 "Settings",
                 "Settings Panel\n\n\
-            Current Configuration:\n\
-            • Side: Adjustable (l/r keys)\n\
-            • Width: Adjustable ([ ] keys)\n\
-            • Animations: Toggle (a key)\n\
-            • Layout Mode: Toggle (t key)\n\n\
-            Sidebar Todo List remains visible.",
+                Current Configuration:\n\
+                • Side: Adjustable (l/r keys)\n\
+                • Width: Adjustable ([ ] keys)\n\
+                • Layout Mode: Toggle (t key)\n\n\
+                Sidebar Todo List remains visible.",
             ),
         )
         .build()?;

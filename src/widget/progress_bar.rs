@@ -39,7 +39,7 @@ use ratatui::{
 };
 use std::time::Duration;
 
-use crate::animation::ControlAnimationContext;
+use crate::animation::{AnimationMode, ControlAnimationContext};
 use crate::event::Event;
 use crate::focus::EventResult;
 use crate::theme::Theme;
@@ -523,14 +523,17 @@ impl ProgressBar {
         let adjusted_elapsed =
             Duration::from_nanos((elapsed.as_nanos() as f64 * speed_multiplier as f64) as u64);
 
+        // Update accumulated time first
+        self.anim_state.accumulated_time += adjusted_elapsed;
+
         let duration_ms = self.config.animation_duration.as_millis() as f64;
-        let elapsed_ms = adjusted_elapsed.as_millis() as f64;
+        let total_elapsed_ms = self.anim_state.accumulated_time.as_millis() as f64;
 
         match self.config.indeterminate_style {
             IndeterminateStyle::BackAndForth => {
                 // Calculate progress within one full cycle (forward + back)
                 let cycle_duration = duration_ms * 2.0;
-                let progress = (elapsed_ms % cycle_duration) / cycle_duration;
+                let progress = (total_elapsed_ms % cycle_duration) / cycle_duration;
 
                 // Convert to position (0.0 -> 1.0 -> 0.0)
                 if progress < 0.5 {
@@ -541,13 +544,13 @@ impl ProgressBar {
             }
             IndeterminateStyle::Marquee => {
                 // Continuous scroll
-                let progress = (elapsed_ms % duration_ms) / duration_ms;
+                let progress = (total_elapsed_ms % duration_ms) / duration_ms;
                 self.anim_state.position = progress;
             }
             IndeterminateStyle::Pulse => {
                 // Sine wave between 0.3 and 1.0
                 let cycle_duration = duration_ms;
-                let progress = (elapsed_ms % cycle_duration) / cycle_duration;
+                let progress = (total_elapsed_ms % cycle_duration) / cycle_duration;
                 // Sine wave: 0.5 + 0.5 * sin(2 * PI * progress - PI/2) gives 0.0 to 1.0
                 let sine = 0.5
                     + 0.5
@@ -557,9 +560,6 @@ impl ProgressBar {
                 self.anim_state.position = 0.3 + sine * 0.7;
             }
         }
-
-        // Update accumulated time for future calculations
-        self.anim_state.accumulated_time += adjusted_elapsed;
 
         true // Always needs redraw for animation
     }
@@ -593,11 +593,35 @@ impl Control for ProgressBar {
             return false;
         }
 
+        // Check animation mode
+        let mode = ctx.mode();
+
+        if mode == AnimationMode::None {
+            // Static - no animation
+            return false;
+        }
+
         // Use a fixed time step for consistent animation
         // This simulates elapsed time while respecting speed multiplier
         let base_elapsed = Duration::from_millis(16); // ~60fps
         let speed = ctx.speed_multiplier();
         let elapsed = Duration::from_nanos((base_elapsed.as_nanos() as f32 * speed) as u64);
+
+        // In reduced mode, use simple blink (on/off) instead of movement
+        if mode == AnimationMode::Reduced {
+            // Simple blink: just toggle visibility based on accumulated time
+            self.anim_state.accumulated_time += elapsed;
+            let blink_duration = Duration::from_millis(500); // 500ms blink
+            let cycle =
+                self.anim_state.accumulated_time.as_millis() % (blink_duration.as_millis() * 2);
+            // Show when in first half of cycle
+            self.anim_state.position = if cycle < blink_duration.as_millis() {
+                1.0
+            } else {
+                0.0
+            };
+            return true;
+        }
 
         self.tick_internal(elapsed, 1.0) // Speed already applied to elapsed
     }

@@ -38,7 +38,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::animation::{ControlAnimationContext, FadeAnimation};
+use crate::animation::{AnimationMode, ControlAnimationContext, FadeAnimation};
 use crate::event::{Event, KeyCode, KeyModifiers};
 use crate::focus::EventResult;
 use crate::widget::{
@@ -266,6 +266,8 @@ impl TextBoxBuilder {
             cursor_color: Color::White,
             events: Vec::new(),
             scroll_offset: Cell::new(0),
+            cursor_visible: true,
+            blink_accumulated: Duration::ZERO,
         }
     }
 }
@@ -299,6 +301,10 @@ pub struct TextBox {
     events: Vec<TextBoxEvent>,
     /// Scroll offset for long text (Cell for interior mutability in draw).
     scroll_offset: Cell<usize>,
+    /// Whether cursor is visible (for reduced animation mode).
+    cursor_visible: bool,
+    /// Accumulated time for reduced mode blink.
+    blink_accumulated: Duration,
 }
 
 impl TextBox {
@@ -322,6 +328,8 @@ impl TextBox {
             cursor_color: Color::White,
             events: Vec::new(),
             scroll_offset: Cell::new(0),
+            cursor_visible: true,
+            blink_accumulated: Duration::ZERO,
         }
     }
 
@@ -895,6 +903,40 @@ impl Control for TextBox {
             false
         };
 
+        // Handle reduced animation mode - simple blink
+        if ctx.mode() == AnimationMode::Reduced {
+            if should_pause {
+                // While typing, show cursor solid
+                self.cursor_visible = true;
+                self.cursor_color = Color::Rgb(255, 255, 255);
+                return true;
+            }
+
+            // Use fixed time step for consistent blinking
+            let base_elapsed = Duration::from_millis(16);
+            let speed = ctx.speed_multiplier();
+            let elapsed = Duration::from_nanos((base_elapsed.as_nanos() as f32 * speed) as u64);
+
+            self.blink_accumulated += elapsed;
+            let blink_interval = Duration::from_millis(800); // 800ms on, 800ms off
+
+            // Toggle visibility based on accumulated time
+            let cycle = self.blink_accumulated.as_millis() % (blink_interval.as_millis() * 2);
+            let new_visible = cycle < blink_interval.as_millis();
+
+            if new_visible != self.cursor_visible {
+                self.cursor_visible = new_visible;
+                self.cursor_color = if self.cursor_visible {
+                    Color::Rgb(255, 255, 255)
+                } else {
+                    Color::DarkGray
+                };
+                return true;
+            }
+            return false;
+        }
+
+        // Full animation mode - use fade animation
         if should_pause {
             // Pause animation and force full brightness
             ctx.pause(&self.animation_id);

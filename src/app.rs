@@ -786,7 +786,16 @@ impl<M: MainUi + 'static> App<M> {
         task_manager: &mut TaskManager,
         should_quit: &mut bool,
     ) -> Result<bool, AppError> {
-        // Three-phase event dispatch:
+        // Multi-phase event dispatch:
+        //
+        // Phase -1: Dev overlays (log viewer) handles events when visible
+        // The log viewer consumes all keyboard input for filtering/navigation
+        if self.dev_overlay_manager.is_log_viewer_visible() {
+            let result = self.dev_overlay_manager.handle_event(event);
+            if result.is_handled() {
+                return Ok(true);
+            }
+        }
         //
         // Phase 0: Modal handles the event first (if open)
         let modal_consumed = self.modal_manager.handle_event(event);

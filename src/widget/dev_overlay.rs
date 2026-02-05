@@ -33,6 +33,7 @@ use ratatui::{layout::Rect, Frame};
 use tokio::sync::mpsc;
 
 use crate::event::Event;
+use crate::focus::EventResult;
 use crate::theme::Theme;
 
 use super::debug_panel::{DebugPanel, FrameTrigger};
@@ -134,6 +135,22 @@ impl DevOverlayManager {
             }
         }
         had_logs
+    }
+
+    /// Handle events for the dev overlays.
+    ///
+    /// When the log viewer is visible, it consumes all keyboard events
+    /// for filtering and navigation.
+    ///
+    /// Returns EventResult::Handled if the event was consumed.
+    pub fn handle_event(&mut self, event: &Event) -> EventResult {
+        // Log viewer gets priority when visible
+        let result = self.log_viewer.handle_event(event);
+        if result.is_handled() {
+            return result;
+        }
+
+        EventResult::Unhandled
     }
 
     /// Convert an Event to a FrameTrigger for recording.

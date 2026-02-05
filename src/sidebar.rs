@@ -215,7 +215,14 @@ impl SidebarState {
     /// }
     /// ```
     pub fn toggle(&mut self) {
-        if self.is_visible() {
+        // If we're in the middle of an animation, reverse direction
+        if self.visibility == SidebarVisibility::Transitioning {
+            self.effective_visible = !self.effective_visible;
+            return;
+        }
+
+        // Otherwise, normal toggle based on current state
+        if self.effective_visible {
             self.hide();
         } else {
             self.show();
@@ -271,7 +278,11 @@ impl SidebarState {
     /// This returns true if the sidebar should be rendered, accounting
     /// for any ongoing animations.
     pub fn is_visible(&self) -> bool {
-        self.effective_visible && self.effective_width_percent > 0.0
+        // Sidebar is visible if:
+        // 1. It's marked as visible and has width, OR
+        // 2. It's in a transition state (animating show/hide)
+        (self.effective_visible && self.effective_width_percent > 0.0)
+            || self.visibility == SidebarVisibility::Transitioning
     }
 
     /// Check if the sidebar is completely hidden.
@@ -497,7 +508,7 @@ impl SidebarState {
         }
 
         // Handle show/hide animation
-        if self.visibility == SidebarVisibility::Transitioning && self.width == self.target_width {
+        if self.visibility == SidebarVisibility::Transitioning {
             let target_percent = if self.effective_visible {
                 self.constraint_to_percent(self.target_width)
             } else {

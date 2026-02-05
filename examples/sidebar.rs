@@ -31,7 +31,9 @@ use ratatui::{
     Frame,
 };
 use std::time::{Duration, Instant};
-use tabitha::widget::{TabBar, TabContent};
+use tabitha::widget::{
+    Control, IndeterminateStyle, LabelPosition, ProgressBar, TabBar, TabContent,
+};
 use tabitha::{
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, KeyCode, MainUi,
     Side, Sidebar, SidebarState,
@@ -133,6 +135,7 @@ enum LayoutMode {
 struct SidebarApp {
     sidebar_state: SidebarState,
     todo_list: TodoList,
+    progress_bar: ProgressBar,
     width_level: u8,
     animation_enabled: bool,
     layout_mode: LayoutMode,
@@ -146,9 +149,17 @@ impl SidebarApp {
             .with_animations(true)
             .with_animation_duration(Duration::from_millis(200));
 
+        // Create an indeterminate progress bar for "thinking" simulation
+        let progress_bar = ProgressBar::indeterminate()
+            .with_label("Thinking...")
+            .with_label_position(LabelPosition::Left)
+            .with_indeterminate_style(IndeterminateStyle::BackAndForth)
+            .with_animation_duration(Duration::from_millis(600));
+
         Self {
             sidebar_state,
             todo_list: TodoList::new(),
+            progress_bar,
             width_level: 1, // 0=15%, 1=25%, 2=35%
             animation_enabled: true,
             layout_mode: LayoutMode::TabbarFullWidth,
@@ -310,12 +321,17 @@ impl Component for SidebarApp {
         }
     }
 
-    fn tick(&mut self, _ctx: &mut AppContext) {
+    fn tick(&mut self, ctx: &mut AppContext) {
         // Update sidebar animations with elapsed time since last tick
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_tick);
         self.last_tick = now;
         self.sidebar_state.tick(elapsed);
+
+        // Update progress bar animation if animations are enabled
+        if let Some(mut anim_ctx) = ctx.control_animations() {
+            self.progress_bar.tick(&mut anim_ctx);
+        }
     }
 }
 
@@ -371,12 +387,21 @@ impl SidebarApp {
         let status_para = Paragraph::new(status_text).style(Style::default().fg(Color::White));
         frame.render_widget(status_para, sidebar_inner);
 
-        // Draw todo list below status if there's room
+        // Draw progress bar (thinking indicator)
+        let progress_area = Rect {
+            x: sidebar_inner.x,
+            y: sidebar_inner.y + 7, // After status text
+            width: sidebar_inner.width,
+            height: 1,
+        };
+        self.progress_bar.draw(frame, progress_area, false);
+
+        // Draw todo list below progress bar if there's room
         let todo_area = Rect {
             x: sidebar_inner.x,
-            y: sidebar_inner.y + 8, // Offset for status text
+            y: sidebar_inner.y + 9, // Offset for status text + progress bar + padding
             width: sidebar_inner.width,
-            height: sidebar_inner.height.saturating_sub(8),
+            height: sidebar_inner.height.saturating_sub(9),
         };
 
         if todo_area.height > 0 {
@@ -420,6 +445,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = AppBuilder::new()
         .main_ui(SidebarApp::new())
         .mouse_capture(false)
+        .tick_rate(Duration::from_millis(16)) // ~60fps for smooth animations
         .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)
         .add_tab(

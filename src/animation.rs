@@ -498,6 +498,16 @@ impl<'a> ControlAnimationContext<'a> {
     pub fn contains(&self, id: &str) -> bool {
         self.controller.contains(id)
     }
+
+    /// Check if animations are globally enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.controller.is_enabled()
+    }
+
+    /// Get the global speed multiplier.
+    pub fn speed_multiplier(&self) -> f32 {
+        self.controller.speed_multiplier()
+    }
 }
 
 // =============================================================================

@@ -50,6 +50,7 @@
 mod datatable;
 mod dev_console;
 mod modal;
+mod progress_bar;
 mod tab_bar;
 mod tab_content;
 mod textbox;
@@ -60,6 +61,9 @@ pub use datatable::{
 };
 pub use dev_console::{DevConsole, LogLine};
 pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult};
+pub use progress_bar::{
+    IndeterminateStyle, LabelPosition, ProgressBar, ProgressBarConfig, ProgressBarEvent,
+};
 pub use tab_bar::TabBar;
 pub use tab_content::TabContent;
 pub use textbox::{TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};

@@ -943,7 +943,7 @@ impl Control for TextBox {
             ctx.set_progress(&self.animation_id, 1.0);
             let old_color = self.cursor_color;
             self.cursor_color = Color::Rgb(255, 255, 255);
-            return old_color != Color::Rgb(255, 255, 255);
+            old_color != Color::Rgb(255, 255, 255)
         } else {
             // Resume animation
             ctx.resume(&self.animation_id);
@@ -951,9 +951,10 @@ impl Control for TextBox {
             if let Some(color) = ctx.current_color(&self.animation_id) {
                 let old_color = self.cursor_color;
                 self.cursor_color = color;
-                return old_color != color;
+                old_color != color
+            } else {
+                false
             }
-            false
         }
     }
 

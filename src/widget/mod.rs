@@ -48,7 +48,10 @@
 //! ```
 
 mod datatable;
+mod debug_panel;
 mod dev_console;
+mod dev_overlay;
+pub mod log_viewer;
 mod modal;
 mod progress_bar;
 mod tab_bar;
@@ -59,7 +62,10 @@ pub use datatable::{
     Column, ColumnAlign, ColumnType, ColumnWidth, DataTable, DataTableConfig, DataTableEvent,
     SelectionMode, SimpleRow, SortDirection, SortState, TableRow,
 };
-pub use dev_console::{DevConsole, LogLine};
+pub use debug_panel::{DebugPanel, FrameInfo, FrameTrigger};
+pub use dev_console::DevConsole;
+pub use dev_overlay::{DevOverlayContext, DevOverlayManager};
+pub use log_viewer::{LogLine, LogViewer};
 pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, ModalResult};
 pub use progress_bar::{
     IndeterminateStyle, LabelPosition, ProgressBar, ProgressBarConfig, ProgressBarEvent,

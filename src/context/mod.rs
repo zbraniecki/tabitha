@@ -16,7 +16,10 @@ use crate::task::{BlockingHandle, CongestionController};
 use crate::task_manager::{TaskManager, TaskManagerContext};
 use crate::terminal::{Terminal, TerminalError};
 use crate::theme::Theme;
-use crate::widget::{Modal, ModalManager, ModalResult};
+use crate::widget::{DevOverlayManager, Modal, ModalManager, ModalResult};
+
+// Re-export DevOverlayContext from widget module
+pub use crate::widget::DevOverlayContext;
 
 // Import traits
 pub use self::traits::*;
@@ -70,6 +73,7 @@ pub struct AppContext<'a> {
     pub(crate) modal_manager: &'a mut ModalManager,
     pub(crate) task_manager: Option<&'a mut TaskManager>,
     pub(crate) animation_controller: Option<&'a mut AnimationController>,
+    pub(crate) dev_overlay_manager: Option<&'a mut DevOverlayManager>,
     pub(crate) should_quit: bool,
 }
 
@@ -89,18 +93,20 @@ impl<'a> AppContext<'a> {
             modal_manager,
             task_manager: None,
             animation_controller: None,
+            dev_overlay_manager: None,
             should_quit: false,
         }
     }
 
-    /// Create a new application context with task manager.
-    pub(crate) fn with_task_manager(
+    /// Create a new application context with task manager and dev overlays.
+    pub(crate) fn with_task_manager_and_overlays(
         terminal: &'a mut Terminal,
         tab_manager: &'a mut TabManager,
         focus_manager: &'a mut FocusManager,
         modal_manager: &'a mut ModalManager,
         task_manager: &'a mut TaskManager,
         animation_controller: &'a mut AnimationController,
+        dev_overlay_manager: &'a mut DevOverlayManager,
     ) -> Self {
         Self {
             terminal,
@@ -109,6 +115,7 @@ impl<'a> AppContext<'a> {
             modal_manager,
             task_manager: Some(task_manager),
             animation_controller: Some(animation_controller),
+            dev_overlay_manager: Some(dev_overlay_manager),
             should_quit: false,
         }
     }
@@ -129,6 +136,26 @@ impl<'a> AppContext<'a> {
         self.animation_controller
             .as_mut()
             .map(|controller| ControlAnimationContext::new(controller))
+    }
+
+    /// Access the developer overlay controls.
+    ///
+    /// Returns `None` if dev overlays are not available for this app.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if event.is_key(KeyCode::Char('~')) {
+    ///     if let Some(mut overlays) = ctx.dev_overlays() {
+    ///         overlays.toggle_log_viewer();
+    ///     }
+    ///     return EventResult::Handled;
+    /// }
+    /// ```
+    pub fn dev_overlays(&mut self) -> Option<DevOverlayContext<'_>> {
+        self.dev_overlay_manager
+            .as_mut()
+            .map(|manager| DevOverlayContext::new(manager))
     }
 }
 

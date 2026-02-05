@@ -4,7 +4,7 @@
 //! and the `App` struct that runs the main event loop.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::EventStream;
 use futures::StreamExt;
@@ -16,7 +16,7 @@ use crate::bus::{MessageBus, MessageBusReceiver, TaskMessage, TaskSender};
 use crate::component::{Component, MainUi};
 use crate::context::traits::CanQuit;
 use crate::context::{AppContext, DrawContext};
-use crate::event::{AppEvent, Event, KeyCode};
+use crate::event::{AppEvent, Event};
 use crate::focus::FocusManager;
 use crate::tabs::TabManager;
 use crate::task::{
@@ -25,7 +25,8 @@ use crate::task::{
 use crate::task_manager::TaskManager;
 use crate::terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
 use crate::theme::Theme;
-use crate::widget::{DevConsole, ModalManager};
+use crate::widget::log_viewer::LogLine;
+use crate::widget::{DevOverlayManager, FrameTrigger, ModalManager};
 
 /// Default buffer size for the event channel.
 const EVENT_CHANNEL_SIZE: usize = 256;
@@ -114,8 +115,7 @@ pub struct AppBuilder<M: MainUi> {
     theme: Theme,
     tick_rate: Option<Duration>,
     mouse_capture: bool,
-    dev_console_enabled: bool,
-    log_rx: Option<mpsc::UnboundedReceiver<crate::widget::LogLine>>,
+    log_rx: Option<mpsc::UnboundedReceiver<LogLine>>,
 }
 
 impl<M: MainUi + 'static> AppBuilder<M> {
@@ -133,36 +133,31 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             theme: Theme::default(),
             tick_rate: None,
             mouse_capture: true,
-            dev_console_enabled: false,
             log_rx: None,
         }
     }
 
-    /// Enable the developer console.
+    /// Set the log receiver for the log viewer.
     ///
-    /// When enabled, press `~` (backtick) to toggle the developer console
-    /// overlay which displays log messages and debug information.
+    /// This allows the developer overlay log viewer to receive log messages
+    /// from a tracing layer. The log viewer can be toggled via the
+    /// dev_overlays context in your event handler.
     ///
     /// # Example
     ///
     /// ```ignore
+    /// use tabitha::{AppBuilder, DevConsoleLayer};
+    /// use tokio::sync::mpsc;
+    ///
+    /// let (tx, rx) = mpsc::unbounded_channel();
+    /// let layer = DevConsoleLayer::new(tx);
+    ///
     /// let app = AppBuilder::new()
     ///     .main_ui(MyApp::new())
-    ///     .enable_dev_console(true)
+    ///     .with_log_receiver(Some(rx))
     ///     .build()?;
     /// ```
-    pub fn enable_dev_console(mut self, enabled: bool) -> Self {
-        self.dev_console_enabled = enabled;
-        self
-    }
-
-    /// Set the log receiver for the developer console.
-    ///
-    /// This is typically set by `TabithaArgs::init_tracing()` when `--dev` is used.
-    pub fn with_log_receiver(
-        mut self,
-        rx: Option<mpsc::UnboundedReceiver<crate::widget::LogLine>>,
-    ) -> Self {
+    pub fn with_log_receiver(mut self, rx: Option<mpsc::UnboundedReceiver<LogLine>>) -> Self {
         self.log_rx = rx;
         self
     }
@@ -273,15 +268,6 @@ impl<M: MainUi + 'static> AppBuilder<M> {
     pub fn build(self) -> Result<App<M>, BuildError> {
         let main_ui = self.main_ui.ok_or(BuildError::NoMainUi)?;
 
-        let dev_console = if self.dev_console_enabled {
-            DevConsole::new()
-        } else {
-            // Create a hidden console that won't be rendered
-            let mut console = DevConsole::new();
-            console.hide();
-            console
-        };
-
         Ok(App {
             main_ui,
             tasks: self.tasks,
@@ -296,9 +282,8 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             terminal_config: TerminalConfig {
                 mouse_capture: self.mouse_capture,
             },
-            dev_console,
-            dev_console_enabled: self.dev_console_enabled,
-            log_rx: self.log_rx,
+            dev_overlay_manager: DevOverlayManager::new(self.log_rx),
+            last_frame_trigger: None,
         })
     }
 
@@ -341,9 +326,9 @@ pub struct App<M: MainUi> {
     theme: Theme,
     tick_rate: Option<Duration>,
     terminal_config: TerminalConfig,
-    dev_console: DevConsole,
-    dev_console_enabled: bool,
-    log_rx: Option<mpsc::UnboundedReceiver<crate::widget::LogLine>>,
+    dev_overlay_manager: DevOverlayManager,
+    /// Track what triggered the last frame for the debug panel
+    last_frame_trigger: Option<FrameTrigger>,
 }
 
 impl<M: MainUi + 'static> App<M> {
@@ -402,6 +387,7 @@ impl<M: MainUi + 'static> App<M> {
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
 
         // Initial draw before starting event loop
+        self.last_frame_trigger = Some(FrameTrigger::Other("initial".to_string()));
         self.draw(&mut terminal)?;
 
         // Run event sources concurrently with fail-fast semantics
@@ -640,6 +626,7 @@ impl<M: MainUi + 'static> App<M> {
             });
 
             // Wait for either an event or the next tick time
+            let before_wait = Instant::now();
             let event = if let Some(wait) = wait_duration {
                 if wait.is_zero() {
                     // Tick is due now, don't wait - just check for events non-blocking
@@ -659,6 +646,13 @@ impl<M: MainUi + 'static> App<M> {
                 // No animations - just wait for events
                 event_rx.recv().await
             };
+            let wait_time = before_wait.elapsed();
+            if let Some(ref evt) = event {
+                if wait_time.as_micros() > 500 {
+                    let evt_str = format!("{:?}", evt);
+                    tracing::debug!(event_type = %evt_str, ?wait_time, "event received after long wait");
+                }
+            }
 
             // Process the event if we got one
             if let Some(event) = event {
@@ -691,13 +685,9 @@ impl<M: MainUi + 'static> App<M> {
                 }
             }
 
-            // Poll log receiver and feed logs to dev console
-            if let Some(ref mut log_rx) = self.log_rx {
-                while let Ok(log_line) = log_rx.try_recv() {
-                    self.dev_console.push(log_line);
-                    needs_redraw = true;
-                }
-            }
+            // Poll log receiver and feed logs to dev overlay
+            let logs_polled = self.dev_overlay_manager.poll_logs();
+            needs_redraw |= logs_polled;
 
             // Check if we should quit
             if should_quit {
@@ -724,18 +714,32 @@ impl<M: MainUi + 'static> App<M> {
         _build_time_handles: &mut Vec<TaskHandle>,
         should_quit: &mut bool,
     ) -> Result<bool, AppError> {
+        // Track what triggered this frame for the debug panel
+        let trigger = match &event {
+            AppEvent::Terminal(event) => DevOverlayManager::event_to_trigger(event),
+            AppEvent::TaskMessage(task_message) => {
+                FrameTrigger::TaskMessage(task_message.task_name.to_string())
+            }
+            AppEvent::Tick => FrameTrigger::Tick,
+        };
+
+        // Store the trigger for later use in draw()
+        self.last_frame_trigger = Some(trigger);
+
         match event {
             AppEvent::Terminal(event) => {
                 self.dispatch_terminal_event(&event, terminal, task_manager, should_quit)
             }
             AppEvent::TaskMessage(task_message) => {
-                let mut ctx = AppContext::with_task_manager(
+                let before_handle = Instant::now();
+                let mut ctx = AppContext::with_task_manager_and_overlays(
                     terminal,
                     &mut self.tab_manager,
                     &mut self.focus_manager,
                     &mut self.modal_manager,
                     task_manager,
                     &mut self.animation_controller,
+                    &mut self.dev_overlay_manager,
                 );
                 let redraw = self.main_ui.handle_task_message(
                     task_message.task_name,
@@ -743,6 +747,14 @@ impl<M: MainUi + 'static> App<M> {
                     &mut ctx,
                 );
                 *should_quit = ctx.should_quit();
+                let handle_time = before_handle.elapsed();
+                if handle_time.as_millis() > 0 {
+                    tracing::debug!(
+                        task_name = task_message.task_name,
+                        ?handle_time,
+                        "task message handled slowly"
+                    );
+                }
                 Ok(redraw)
             }
             AppEvent::Tick => {
@@ -750,13 +762,14 @@ impl<M: MainUi + 'static> App<M> {
                 let tick_duration = self.tick_rate.unwrap_or(Duration::from_millis(16));
                 let _needs_redraw = self.animation_controller.tick(tick_duration);
 
-                let mut ctx = AppContext::with_task_manager(
+                let mut ctx = AppContext::with_task_manager_and_overlays(
                     terminal,
                     &mut self.tab_manager,
                     &mut self.focus_manager,
                     &mut self.modal_manager,
                     task_manager,
                     &mut self.animation_controller,
+                    &mut self.dev_overlay_manager,
                 );
                 self.main_ui.tick(&mut ctx);
                 *should_quit = ctx.should_quit();
@@ -773,14 +786,6 @@ impl<M: MainUi + 'static> App<M> {
         task_manager: &mut TaskManager,
         should_quit: &mut bool,
     ) -> Result<bool, AppError> {
-        // Check for dev console toggle first (` key)
-        if self.dev_console_enabled
-            && matches!(event, Event::Key(key) if key.code == KeyCode::Char('`'))
-        {
-            self.dev_console.toggle();
-            return Ok(true);
-        }
-
         // Three-phase event dispatch:
         //
         // Phase 0: Modal handles the event first (if open)
@@ -788,13 +793,14 @@ impl<M: MainUi + 'static> App<M> {
 
         // Phase 1: MainUi handles the event
         let _main_result = {
-            let mut ctx = AppContext::with_task_manager(
+            let mut ctx = AppContext::with_task_manager_and_overlays(
                 terminal,
                 &mut self.tab_manager,
                 &mut self.focus_manager,
                 &mut self.modal_manager,
                 task_manager,
                 &mut self.animation_controller,
+                &mut self.dev_overlay_manager,
             );
             let result = if modal_consumed {
                 self.main_ui.handle_event(event, &mut ctx);
@@ -815,7 +821,15 @@ impl<M: MainUi + 'static> App<M> {
 
     /// Draw the UI.
     fn draw(&mut self, terminal: &mut Terminal) -> Result<(), AppError> {
-        tracing::trace!("drawing frame");
+        use std::time::Instant;
+
+        let draw_start = Instant::now();
+
+        // Get the trigger for this frame, or use a default
+        let trigger = self
+            .last_frame_trigger
+            .take()
+            .unwrap_or_else(|| FrameTrigger::Other("draw".to_string()));
 
         // Use dimmed theme for main UI when modal is open
         let main_theme = if self.modal_manager.is_open() {
@@ -825,15 +839,52 @@ impl<M: MainUi + 'static> App<M> {
         };
 
         let draw_ctx = DrawContext::new(&self.tab_manager, &self.focus_manager, &main_theme);
+
+        let before_terminal_draw = Instant::now();
+        let mut main_ui_time = Duration::ZERO;
+        let mut modal_time = Duration::ZERO;
+        let mut overlay_time = Duration::ZERO;
+
         terminal.draw(|frame| {
             let area = frame.area();
+
+            let t1 = Instant::now();
             // Draw main UI first (with potentially dimmed theme)
             self.main_ui.draw(frame, area, &draw_ctx);
+            main_ui_time = t1.elapsed();
+
+            let t2 = Instant::now();
             // Draw modal on top (if open) - modal uses full theme colors
             self.modal_manager.draw(frame, area, &self.theme);
-            // Draw developer console on top of everything (if visible)
-            self.dev_console.draw(frame, area, &self.theme);
+            modal_time = t2.elapsed();
+
+            let t3 = Instant::now();
+            // Draw developer overlays on top of everything
+            self.dev_overlay_manager.draw(frame, area, &self.theme);
+            overlay_time = t3.elapsed();
         })?;
+        let terminal_draw_time = before_terminal_draw.elapsed();
+
+        // Record frame timing
+        let total_render_time = draw_start.elapsed();
+
+        // Log if terminal.draw took significant time
+        if terminal_draw_time.as_micros() > 500 {
+            let trigger_str = format!("{:?}", trigger);
+            tracing::debug!(
+                trigger = %trigger_str,
+                ?terminal_draw_time,
+                ?main_ui_time,
+                ?modal_time,
+                ?overlay_time,
+                ?total_render_time,
+                "slow terminal.draw breakdown"
+            );
+        }
+
+        self.dev_overlay_manager
+            .record_frame(total_render_time, trigger);
+
         Ok(())
     }
 }

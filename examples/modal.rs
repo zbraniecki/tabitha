@@ -300,7 +300,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .tick_rate(Duration::from_millis(100)) // For cursor blinking
         .register_focus("input")
         .initial_focus("input")
-        .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)
         .build()?;
 

@@ -384,7 +384,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .main_ui(AnimationApp::new())
         .mouse_capture(false)
         .tick_rate(Duration::from_millis(16)) // ~60fps for smooth animations
-        .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)
         .build()?;
 

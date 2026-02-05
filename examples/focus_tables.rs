@@ -380,7 +380,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_tab("welcome", "Welcome", WelcomeTab)
         .add_tab("data", "Data", DataTab::new())
         .mouse_capture(false)
-        .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)
         .build()?;
 

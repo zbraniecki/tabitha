@@ -233,7 +233,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_tab("dashboard", "Dashboard", DashboardTab::new())
         .add_tab("settings", "Settings", SettingsTab::new())
         .mouse_capture(false) // Disable mouse for this example
-        .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)
         .build()?;
 

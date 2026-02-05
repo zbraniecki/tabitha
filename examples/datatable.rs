@@ -432,7 +432,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = AppBuilder::new()
         .main_ui(DataTableApp::new())
         .mouse_capture(false)
-        .enable_dev_console(args.dev)
         .with_log_receiver(log_rx)
         .build()?;
 

@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::widget::LogLine;
+use crate::widget::log_viewer::LogLine;
 
 /// A tracing layer that sends log events to a channel.
 ///

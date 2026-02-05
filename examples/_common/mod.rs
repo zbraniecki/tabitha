@@ -29,7 +29,9 @@ impl Args {
     /// - `--log-file <PATH>`: Log to file with INFO level (respects RUST_LOG)
     /// - `--dev`: Enable dev console with tracing integration
     /// - Neither: No tracing initialization (tracing calls are no-ops)
-    pub fn init_tracing(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<tabitha::LogLine>> {
+    pub fn init_tracing(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<tabitha::widget::log_viewer::LogLine>> {
         if let Some(path) = &self.log_file {
             // Mode 1: Log to file
             if let Ok(file) = std::fs::File::create(path) {

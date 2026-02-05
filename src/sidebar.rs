@@ -634,6 +634,7 @@ impl Sidebar {
     /// The order depends on which side the sidebar is on.
     ///
     /// If the sidebar is hidden, the sidebar_area will have zero width.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(state: &SidebarState, area: ratatui::layout::Rect) -> [ratatui::layout::Rect; 2] {
         if !state.is_visible() || state.effective_width_percent() <= 0.0 {
             // Sidebar is hidden, return full area for main content

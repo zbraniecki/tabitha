@@ -9,7 +9,9 @@ use ratatui::layout::Rect;
 use crate::task::{BlockingHandle, CongestionController};
 use crate::terminal::TerminalError;
 
-use super::{FocusEventContext, ModalEventContext, TabsEventContext, TaskManagerContext};
+use super::{
+    DevOverlayContext, FocusEventContext, ModalEventContext, TabsEventContext, TaskManagerContext,
+};
 
 /// Trait for types that provide access to focus controls.
 ///
@@ -204,4 +206,33 @@ pub trait CanSpawnBlocking {
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static;
+}
+
+/// Trait for types that provide access to developer overlay controls.
+///
+/// This trait allows components to toggle the log viewer and debug panel
+/// for debugging purposes.
+///
+/// # Example
+///
+/// ```ignore
+/// use tabitha::{Component, Event, AppContext, EventResult, KeyCode, HasDevOverlays};
+///
+/// impl<T: HasDevOverlays> Component for MyWidget {
+///     fn handle_event(&mut self, event: &Event, ctx: &mut T) -> EventResult {
+///         if event.is_key(KeyCode::Char('~')) {
+///             ctx.dev_overlays().toggle_log_viewer();
+///             return EventResult::Handled;
+///         }
+///         if event.is_key(KeyCode::F(12)) {
+///             ctx.dev_overlays().toggle_debug_panel();
+///             return EventResult::Handled;
+///         }
+///         EventResult::Unhandled
+///     }
+/// }
+/// ```
+pub trait HasDevOverlays {
+    /// Access developer overlay controls.
+    fn dev_overlays(&mut self) -> DevOverlayContext<'_>;
 }

@@ -223,11 +223,6 @@ impl AnimationController {
     ///
     /// Affects all animations. Use `1.0` for normal speed, `0.5` for half,
     /// `2.0` for double.
-
-    /// Set global speed multiplier.
-    ///
-    /// Affects all animations. Use `1.0` for normal speed, `0.5` for half,
-    /// `2.0` for double.
     pub fn set_speed(&mut self, multiplier: f32) {
         self.speed_multiplier = multiplier.clamp(0.1, 10.0);
     }

@@ -119,7 +119,10 @@ pub use app::{App, AppBuilder, AppError, BuildError};
 pub use bus::{MessageBus, SendError, TaskMessage, TaskSender, TrySendError};
 pub use component::{BoxedComponent, Component, ComponentExt, MainUi};
 pub use context::{
-    traits::{CanQuit, CanSpawnBlocking, HasFocus, HasModal, HasTabs, HasTaskManager, HasTerminal},
+    traits::{
+        CanQuit, CanSpawnBlocking, HasDevOverlays, HasFocus, HasModal, HasTabs, HasTaskManager,
+        HasTerminal,
+    },
     AppContext, DrawContext, FocusDrawContext, FocusEventContext, LifecycleContext,
     ModalEventContext, TabsDrawContext, TabsEventContext,
 };
@@ -143,7 +146,8 @@ pub use task::{spawn_blocking, spawn_blocking_or_err, BlockingHandle, BlockingTa
 pub use widget::{
     BoxedControl, Column, ColumnAlign, ColumnType, ColumnWidth, Control, ControlEvent, ControlExt,
     CursorAnimationMode, CursorBlinkConfig, CursorFadeConfig, DataTable, DataTableConfig,
-    DataTableEvent, DevConsole, LogLine, Modal, ModalButton, ModalConfig, ModalInput, ModalManager,
+    DataTableEvent, DebugPanel, DevConsole, DevOverlayContext, DevOverlayManager, FrameInfo,
+    FrameTrigger, LogLine, LogViewer, Modal, ModalButton, ModalConfig, ModalInput, ModalManager,
     ModalResult, SelectionMode, SimpleRow, SortDirection, SortState, TabBar, TabContent, TableRow,
     TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent,
 };

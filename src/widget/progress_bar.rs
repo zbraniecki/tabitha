@@ -46,9 +46,10 @@ use crate::theme::Theme;
 use crate::widget::{Control, ControlEvent};
 
 /// Animation style for indeterminate progress
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IndeterminateStyle {
     /// Ping-pong animation (back and forth like opencode)
+    #[default]
     BackAndForth,
     /// Continuous scrolling animation
     Marquee,
@@ -56,16 +57,11 @@ pub enum IndeterminateStyle {
     Pulse,
 }
 
-impl Default for IndeterminateStyle {
-    fn default() -> Self {
-        Self::BackAndForth
-    }
-}
-
 /// Position for progress bar label
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LabelPosition {
     /// No label
+    #[default]
     None,
     /// Label on the left
     Left,
@@ -73,12 +69,6 @@ pub enum LabelPosition {
     Right,
     /// Label centered over the bar
     Center,
-}
-
-impl Default for LabelPosition {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Events emitted by ProgressBar (empty for now)
@@ -460,8 +450,8 @@ impl ProgressBar {
                 let start = (position * max_start as f64) as usize;
 
                 let mut bar = vec![' '; bar_width_usize];
-                for i in start..(start + block_size).min(bar_width_usize) {
-                    bar[i] = self.config.full_block;
+                for item in bar.iter_mut().skip(start).take(block_size) {
+                    *item = self.config.full_block;
                 }
                 bar.into_iter().collect()
             }
@@ -471,9 +461,8 @@ impl ProgressBar {
                 let start = (position * bar_width_usize as f64) as usize % bar_width_usize;
 
                 let mut bar = vec![' '; bar_width_usize];
-                for i in 0..block_size {
-                    let pos = (start + i) % bar_width_usize;
-                    bar[pos] = self.config.full_block;
+                for (_, item) in bar.iter_mut().enumerate().skip(start).take(block_size) {
+                    *item = self.config.full_block;
                 }
                 bar.into_iter().collect()
             }

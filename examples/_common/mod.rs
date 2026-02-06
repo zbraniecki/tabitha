@@ -56,7 +56,7 @@ impl Args {
             tracing_subscriber::registry()
                 .with(
                     tracing_subscriber::EnvFilter::builder()
-                        .with_default_directive(tracing::Level::INFO.into())
+                        .with_default_directive(tracing::Level::DEBUG.into())
                         .from_env_lossy(),
                 )
                 .with(dev_layer)

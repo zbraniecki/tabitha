@@ -95,9 +95,14 @@ pub trait Component: Send {
     /// The `ctx` parameter provides access to application-level controls.
     ///
     /// Use this for periodic updates like animations or polling.
-    /// The default implementation does nothing.
+    /// Returns `true` if a redraw is needed. When this returns `false`
+    /// consistently and no framework animations are active, the framework
+    /// will stop generating tick events until the next input event arrives.
+    /// The default implementation does nothing and returns `false`.
     #[allow(unused_variables)]
-    fn tick(&mut self, ctx: &mut AppContext) {}
+    fn tick(&mut self, ctx: &mut AppContext) -> bool {
+        false
+    }
 
     // --- Focus methods ---
 

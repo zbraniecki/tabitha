@@ -61,6 +61,12 @@ pub enum TextBoxEvent {
     FocusGained,
     /// Focus was lost.
     FocusLost,
+    /// Text was copied to clipboard (clipboard feature required).
+    #[cfg(feature = "clipboard")]
+    Copied(String),
+    /// Text was cut to clipboard (clipboard feature required).
+    #[cfg(feature = "clipboard")]
+    Cut(String),
 }
 
 impl ControlEvent for TextBoxEvent {}
@@ -90,6 +96,9 @@ pub struct TextBoxConfig {
     pub password_mask: Option<char>,
     /// Maximum length of input (None for unlimited).
     pub max_length: Option<usize>,
+    /// Style for selected text (when selection feature is enabled).
+    #[cfg(feature = "selection")]
+    pub selection_style: Style,
 }
 
 impl Default for TextBoxConfig {
@@ -106,6 +115,8 @@ impl Default for TextBoxConfig {
             cursor_style: Style::default().bg(Color::White).fg(Color::Black),
             password_mask: None,
             max_length: None,
+            #[cfg(feature = "selection")]
+            selection_style: Style::default().bg(Color::Blue).fg(Color::White),
         }
     }
 }
@@ -268,6 +279,8 @@ impl TextBoxBuilder {
             scroll_offset: Cell::new(0),
             cursor_visible: true,
             blink_accumulated: Duration::ZERO,
+            #[cfg(feature = "selection")]
+            selection_anchor: None,
         }
     }
 }
@@ -305,6 +318,9 @@ pub struct TextBox {
     cursor_visible: bool,
     /// Accumulated time for reduced mode blink.
     blink_accumulated: Duration,
+    /// Anchor position for text selection (when selection feature is enabled).
+    #[cfg(feature = "selection")]
+    selection_anchor: Option<usize>,
 }
 
 impl TextBox {
@@ -330,6 +346,8 @@ impl TextBox {
             scroll_offset: Cell::new(0),
             cursor_visible: true,
             blink_accumulated: Duration::ZERO,
+            #[cfg(feature = "selection")]
+            selection_anchor: None,
         }
     }
 
@@ -418,6 +436,88 @@ impl TextBox {
     /// Get a mutable reference to the configuration.
     pub fn config_mut(&mut self) -> &mut TextBoxConfig {
         &mut self.config
+    }
+
+    /// Check if there is an active selection.
+    #[cfg(feature = "selection")]
+    pub fn has_selection(&self) -> bool {
+        self.selection_anchor
+            .map_or(false, |anchor| anchor != self.cursor_pos)
+    }
+
+    /// Get the current selection range as (start, end) character indices.
+    /// Returns None if there is no active selection.
+    #[cfg(feature = "selection")]
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.selection_anchor.map(|anchor| {
+            if anchor < self.cursor_pos {
+                (anchor, self.cursor_pos)
+            } else {
+                (self.cursor_pos, anchor)
+            }
+        })
+    }
+
+    /// Get the currently selected text.
+    /// Returns None if there is no selection.
+    #[cfg(feature = "selection")]
+    pub fn selected_text(&self) -> Option<String> {
+        self.selection_range()
+            .map(|(start, end)| self.text.chars().skip(start).take(end - start).collect())
+    }
+
+    /// Clear the current selection (but keep cursor position).
+    #[cfg(feature = "selection")]
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    /// Set the selection anchor at the current cursor position if not already set.
+    #[cfg(feature = "selection")]
+    fn ensure_anchor(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+    }
+
+    /// Delete the selected text and return it.
+    /// Clears the selection after deletion.
+    /// Returns None if there is no selection.
+    #[cfg(feature = "selection")]
+    fn delete_selection(&mut self) -> Option<String> {
+        let (start, end) = self.selection_range()?;
+        let selected: String = self.text.chars().skip(start).take(end - start).collect();
+
+        // Get byte indices for the range
+        let start_byte = self
+            .text
+            .char_indices()
+            .nth(start)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let end_byte = self
+            .text
+            .char_indices()
+            .nth(end)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+
+        // Delete the selected portion
+        self.text.drain(start_byte..end_byte);
+
+        // Move cursor to start of selection and clear selection
+        self.cursor_pos = start;
+        self.clear_selection();
+        self.mark_text_changed();
+
+        Some(selected)
+    }
+
+    /// Select all text in the input.
+    #[cfg(feature = "selection")]
+    pub fn select_all(&mut self) {
+        self.selection_anchor = Some(0);
+        self.cursor_pos = self.text.chars().count();
     }
 
     // --- Internal helpers ---
@@ -693,43 +793,87 @@ impl Control for TextBox {
             // Build visible portion
             let visible_chars: String = chars.iter().skip(scroll).take(visible_width).collect();
 
-            if focused {
-                // Cursor position relative to scroll
-                let cursor_rel = self.cursor_pos.saturating_sub(scroll);
+            #[cfg(feature = "selection")]
+            let has_selection = self.has_selection();
+            #[cfg(not(feature = "selection"))]
+            let has_selection = false;
 
-                if cursor_rel <= visible_width {
-                    // Build spans: before cursor, cursor char, after cursor
-                    let before: String = visible_chars.chars().take(cursor_rel).collect();
-                    let cursor_char = visible_chars
-                        .chars()
-                        .nth(cursor_rel)
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| " ".to_string());
-                    let after: String = visible_chars.chars().skip(cursor_rel + 1).collect();
+            if focused || has_selection {
+                // Get selection range relative to visible area
+                #[cfg(feature = "selection")]
+                let sel_range = self.selection_range();
 
-                    // Cursor char uses cursor style based on animation mode
-                    let cursor_char_style = if should_show_cursor {
-                        cursor_style
-                    } else {
-                        text_style
-                    };
+                #[cfg(feature = "selection")]
+                let visible_start = scroll;
+                let _visible_end = (scroll + visible_width).min(chars.len());
 
-                    let spans = vec![
-                        Span::styled(before, text_style),
-                        Span::styled(cursor_char, cursor_char_style),
-                        Span::styled(after, text_style),
-                    ];
+                // Build spans with proper styling
+                let mut spans = Vec::new();
 
-                    let line = Line::from(spans);
-                    let para = Paragraph::new(line);
-                    frame.render_widget(para, inner);
-                } else {
-                    // Cursor not in visible area
-                    let para = Paragraph::new(visible_chars).style(text_style);
-                    frame.render_widget(para, inner);
+                #[cfg(feature = "selection")]
+                if has_selection {
+                    // Selection is active - render with selection highlighting
+                    let (sel_start, sel_end) = sel_range.unwrap();
+                    let sel_style = self.config.selection_style;
+
+                    for (idx, ch) in visible_chars.chars().enumerate() {
+                        let absolute_idx = visible_start + idx;
+                        let is_selected = absolute_idx >= sel_start && absolute_idx < sel_end;
+
+                        // Check if this is the cursor position
+                        let is_cursor = absolute_idx == self.cursor_pos;
+
+                        let style = if is_cursor && focused {
+                            cursor_style
+                        } else if is_selected {
+                            sel_style
+                        } else {
+                            text_style
+                        };
+
+                        spans.push(Span::styled(ch.to_string(), style));
+                    }
                 }
+                #[cfg(not(feature = "selection"))]
+                {
+                    // Cursor position relative to scroll
+                    let cursor_rel = self.cursor_pos.saturating_sub(scroll);
+                    // No selection - render normally with cursor
+                    if cursor_rel <= visible_width {
+                        // Build spans: before cursor, cursor char, after cursor
+                        let before: String = visible_chars.chars().take(cursor_rel).collect();
+                        let cursor_char = visible_chars
+                            .chars()
+                            .nth(cursor_rel)
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
+                        let after: String = visible_chars.chars().skip(cursor_rel + 1).collect();
+
+                        // Cursor char uses cursor style based on animation mode
+                        let cursor_char_style = if should_show_cursor || !focused {
+                            cursor_style
+                        } else {
+                            text_style
+                        };
+
+                        if !before.is_empty() {
+                            spans.push(Span::styled(before, text_style));
+                        }
+                        spans.push(Span::styled(cursor_char, cursor_char_style));
+                        if !after.is_empty() {
+                            spans.push(Span::styled(after, text_style));
+                        }
+                    } else {
+                        // Cursor not in visible area
+                        spans.push(Span::styled(visible_chars, text_style));
+                    }
+                }
+
+                let line = Line::from(spans);
+                let para = Paragraph::new(line);
+                frame.render_widget(para, inner);
             } else {
-                // Not focused - no cursor
+                // Not focused, no selection - render normally
                 let para = Paragraph::new(visible_chars).style(text_style);
                 frame.render_widget(para, inner);
             }
@@ -752,7 +896,14 @@ impl Control for TextBox {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             match c {
                                 'a' => {
-                                    self.move_home();
+                                    #[cfg(feature = "selection")]
+                                    {
+                                        self.select_all();
+                                    }
+                                    #[cfg(not(feature = "selection"))]
+                                    {
+                                        self.move_home();
+                                    }
                                     true
                                 }
                                 'e' => {
@@ -780,6 +931,42 @@ impl Control for TextBox {
                                     self.emit(TextBoxEvent::Changed(self.text.clone()));
                                     true
                                 }
+                                #[cfg(feature = "clipboard")]
+                                'c' => {
+                                    // Copy selected text to clipboard
+                                    if let Some(selected) = self.selected_text() {
+                                        if let Err(e) =
+                                            crate::selection::clipboard::copy_to_clipboard(
+                                                &selected,
+                                            )
+                                        {
+                                            tracing::warn!("Failed to copy to clipboard: {}", e);
+                                        }
+                                        self.emit(TextBoxEvent::Copied(selected));
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                #[cfg(feature = "clipboard")]
+                                'x' => {
+                                    // Cut selected text to clipboard
+                                    if let Some(selected) = self.selected_text() {
+                                        if let Err(e) =
+                                            crate::selection::clipboard::copy_to_clipboard(
+                                                &selected,
+                                            )
+                                        {
+                                            tracing::warn!("Failed to copy to clipboard: {}", e);
+                                        }
+                                        self.delete_selection();
+                                        self.emit(TextBoxEvent::Changed(self.text.clone()));
+                                        self.emit(TextBoxEvent::Cut(selected));
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
                                 _ => false,
                             }
                         } else if key.modifiers.contains(KeyModifiers::ALT) {
@@ -795,6 +982,14 @@ impl Control for TextBox {
                                 _ => false,
                             }
                         } else {
+                            #[cfg(feature = "selection")]
+                            {
+                                // If there's a selection, delete it first
+                                if self.has_selection() {
+                                    self.delete_selection();
+                                    self.emit(TextBoxEvent::Changed(self.text.clone()));
+                                }
+                            }
                             self.insert_char(c);
                             true
                         }
@@ -802,37 +997,97 @@ impl Control for TextBox {
 
                     // Navigation
                     KeyCode::Left => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL)
-                            || key.modifiers.contains(KeyModifiers::ALT)
-                        {
-                            self.move_word_left();
-                        } else {
+                        #[cfg(feature = "selection")]
+                        let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                        #[cfg(feature = "selection")]
+                        if shift_pressed {
+                            self.ensure_anchor();
                             self.move_left();
+                        } else {
+                            // Without shift, check if we need to collapse selection
+                            if self.has_selection() {
+                                // Move cursor to the start of selection and clear selection
+                                if let Some((start, _)) = self.selection_range() {
+                                    self.cursor_pos = start;
+                                }
+                                self.clear_selection();
+                            } else {
+                                self.move_left();
+                            }
+                        }
+                        #[cfg(feature = "selection")]
+                        if !shift_pressed
+                            && !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && !key.modifiers.contains(KeyModifiers::ALT)
+                        {
+                            self.clear_selection();
                         }
                         true
                     }
                     KeyCode::Right => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL)
-                            || key.modifiers.contains(KeyModifiers::ALT)
-                        {
-                            self.move_word_right();
-                        } else {
+                        #[cfg(feature = "selection")]
+                        let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                        #[cfg(feature = "selection")]
+                        if shift_pressed {
+                            self.ensure_anchor();
                             self.move_right();
+                        } else {
+                            // Without shift, check if we need to collapse selection
+                            if self.has_selection() {
+                                // Move cursor to the end of selection and clear selection
+                                if let Some((_, end)) = self.selection_range() {
+                                    self.cursor_pos = end;
+                                }
+                                self.clear_selection();
+                            } else {
+                                self.move_right();
+                            }
+                        }
+                        #[cfg(feature = "selection")]
+                        if !shift_pressed
+                            && !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && !key.modifiers.contains(KeyModifiers::ALT)
+                        {
+                            self.clear_selection();
                         }
                         true
                     }
                     KeyCode::Home => {
+                        #[cfg(feature = "selection")]
+                        let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                        #[cfg(feature = "selection")]
+                        if shift_pressed {
+                            self.ensure_anchor();
+                        }
                         self.move_home();
+                        #[cfg(feature = "selection")]
+                        if !shift_pressed {
+                            self.clear_selection();
+                        }
                         true
                     }
                     KeyCode::End => {
+                        #[cfg(feature = "selection")]
+                        let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                        #[cfg(feature = "selection")]
+                        if shift_pressed {
+                            self.ensure_anchor();
+                        }
                         self.move_end();
+                        #[cfg(feature = "selection")]
+                        if !shift_pressed {
+                            self.clear_selection();
+                        }
                         true
                     }
 
                     // Editing
                     KeyCode::Backspace => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                        #[cfg(feature = "selection")]
+                        if self.has_selection() {
+                            self.delete_selection();
+                            self.emit(TextBoxEvent::Changed(self.text.clone()));
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL)
                             || key.modifiers.contains(KeyModifiers::ALT)
                         {
                             self.delete_word_back();
@@ -842,7 +1097,13 @@ impl Control for TextBox {
                         true
                     }
                     KeyCode::Delete => {
-                        self.delete_char();
+                        #[cfg(feature = "selection")]
+                        if self.has_selection() {
+                            self.delete_selection();
+                            self.emit(TextBoxEvent::Changed(self.text.clone()));
+                        } else {
+                            self.delete_char();
+                        }
                         true
                     }
 

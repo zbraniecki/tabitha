@@ -2,9 +2,9 @@
 //!
 //! This module wraps crossterm events and provides a unified event interface.
 
-pub use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
+pub use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
+use crossterm::event::{Event as CrosstermEvent, KeyEvent};
 
 use crate::bus::TaskMessage;
 

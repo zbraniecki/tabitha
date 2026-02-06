@@ -195,6 +195,20 @@ impl Component for SidebarApp {
                 // Split main area between sidebar and content
                 let [content_area, sidebar_area] = Sidebar::new(&self.sidebar_state, chunks[1]);
 
+                // Register selection regions using inner areas (inside borders)
+                #[cfg(feature = "selection")]
+                {
+                    let border_block = Block::default().borders(Borders::ALL);
+                    ctx.register_selection_region("main", border_block.inner(content_area), 0);
+                    if self.sidebar_state.is_visible() {
+                        ctx.register_selection_region(
+                            "sidebar",
+                            border_block.inner(sidebar_area),
+                            10,
+                        );
+                    }
+                }
+
                 // Draw content area (tabs content)
                 self.draw_content(frame, content_area, ctx);
 
@@ -223,6 +237,20 @@ impl Component for SidebarApp {
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Length(3), Constraint::Min(0)])
                     .split(content_area);
+
+                // Register selection regions using inner areas (inside borders)
+                #[cfg(feature = "selection")]
+                {
+                    let border_block = Block::default().borders(Borders::ALL);
+                    ctx.register_selection_region("main", border_block.inner(content_chunks[1]), 0);
+                    if self.sidebar_state.is_visible() {
+                        ctx.register_selection_region(
+                            "sidebar",
+                            border_block.inner(sidebar_area),
+                            10,
+                        );
+                    }
+                }
 
                 // Draw TabBar inside content area
                 TabBar::draw(frame, content_chunks[0], ctx);
@@ -260,6 +288,7 @@ impl Component for SidebarApp {
                 // Toggle sidebar visibility
                 KeyCode::Char('b') => {
                     self.sidebar_state.toggle();
+                    self.last_tick = Instant::now();
                     EventResult::Handled
                 }
                 // Decrease width
@@ -267,6 +296,7 @@ impl Component for SidebarApp {
                     if self.width_level > 0 {
                         self.width_level -= 1;
                         self.update_sidebar_width();
+                        self.last_tick = Instant::now();
                     }
                     EventResult::Handled
                 }
@@ -275,6 +305,7 @@ impl Component for SidebarApp {
                     if self.width_level < 2 {
                         self.width_level += 1;
                         self.update_sidebar_width();
+                        self.last_tick = Instant::now();
                     }
                     EventResult::Handled
                 }
@@ -293,6 +324,20 @@ impl Component for SidebarApp {
                     self.toggle_layout_mode();
                     EventResult::Handled
                 }
+                // Toggle log viewer
+                KeyCode::Char('`') => {
+                    if let Some(mut overlays) = ctx.dev_overlays() {
+                        overlays.toggle_log_viewer();
+                    }
+                    EventResult::Handled
+                }
+                // Toggle debug panel
+                KeyCode::F(12) => {
+                    if let Some(mut overlays) = ctx.dev_overlays() {
+                        overlays.toggle_debug_panel();
+                    }
+                    EventResult::Handled
+                }
                 _ => EventResult::Unhandled,
             }
         } else {
@@ -300,12 +345,13 @@ impl Component for SidebarApp {
         }
     }
 
-    fn tick(&mut self, _ctx: &mut AppContext) {
+    fn tick(&mut self, _ctx: &mut AppContext) -> bool {
         // Update sidebar animations with elapsed time since last tick
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_tick);
         self.last_tick = now;
         self.sidebar_state.tick(elapsed);
+        self.sidebar_state.is_animating()
     }
 }
 
@@ -401,12 +447,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  l/r: Move sidebar to left/right");
     println!("  t: Toggle layout mode");
     println!("  q: Quit");
+    #[cfg(feature = "selection")]
+    {
+        println!();
+        println!("Selection (requires 'selection' feature):");
+        println!("  Mouse drag: Select text within a region");
+        println!("  Ctrl+C: Copy selected text");
+        println!("  Selection is confined to 'main' and 'sidebar' regions");
+    }
     println!();
 
     // Build the application with tabs for the main content area
     let app = AppBuilder::new()
         .main_ui(SidebarApp::new())
-        .mouse_capture(false)
+        .mouse_capture(true)
         .tick_rate(Duration::from_millis(16)) // ~60fps for smooth animations
         .with_log_receiver(log_rx)
         .add_tab(

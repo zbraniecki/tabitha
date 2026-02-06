@@ -116,6 +116,9 @@ pub struct AppBuilder<M: MainUi> {
     tick_rate: Option<Duration>,
     mouse_capture: bool,
     log_rx: Option<mpsc::UnboundedReceiver<LogLine>>,
+    /// Selection configuration (only available with selection feature).
+    #[cfg(feature = "selection")]
+    selection_config: crate::selection::SelectionConfig,
 }
 
 impl<M: MainUi + 'static> AppBuilder<M> {
@@ -134,6 +137,8 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             tick_rate: None,
             mouse_capture: true,
             log_rx: None,
+            #[cfg(feature = "selection")]
+            selection_config: crate::selection::SelectionConfig::default(),
         }
     }
 
@@ -262,6 +267,24 @@ impl<M: MainUi + 'static> AppBuilder<M> {
         self
     }
 
+    /// Set the selection configuration (requires `selection` feature).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use tabitha::{AppBuilder, SelectionConfig};
+    ///
+    /// let app = AppBuilder::new()
+    ///     .main_ui(MyApp::new())
+    ///     .selection_config(SelectionConfig::without_auto_copy())
+    ///     .build()?;
+    /// ```
+    #[cfg(feature = "selection")]
+    pub fn selection_config(mut self, config: crate::selection::SelectionConfig) -> Self {
+        self.selection_config = config;
+        self
+    }
+
     /// Build the application.
     ///
     /// Returns an error if no main UI was provided.
@@ -284,6 +307,10 @@ impl<M: MainUi + 'static> AppBuilder<M> {
             },
             dev_overlay_manager: DevOverlayManager::new(self.log_rx),
             last_frame_trigger: None,
+            #[cfg(feature = "selection")]
+            selection_manager: crate::selection::SelectionManager::with_config(
+                self.selection_config,
+            ),
         })
     }
 
@@ -329,6 +356,9 @@ pub struct App<M: MainUi> {
     dev_overlay_manager: DevOverlayManager,
     /// Track what triggered the last frame for the debug panel
     last_frame_trigger: Option<FrameTrigger>,
+    /// Selection manager for mouse-based text selection (requires `selection` feature).
+    #[cfg(feature = "selection")]
+    selection_manager: crate::selection::SelectionManager,
 }
 
 impl<M: MainUi + 'static> App<M> {
@@ -585,8 +615,10 @@ impl<M: MainUi + 'static> App<M> {
     ///
     /// Processes unified AppEvents from all sources.
     ///
-    /// Animation ticks are tracked independently using elapsed time, ensuring
-    /// they fire at the correct rate regardless of event processing.
+    /// Uses dynamic tick scheduling: when no animations or periodic updates
+    /// are active, the loop blocks on `event_rx.recv().await` with zero CPU.
+    /// When animations are running, it uses `tokio::select!` between tick
+    /// timeout and events at the configured tick rate.
     async fn main_loop(
         &mut self,
         terminal: &mut Terminal,
@@ -599,8 +631,7 @@ impl<M: MainUi + 'static> App<M> {
         let mut event_rx = event_rx;
         let mut should_quit = false;
 
-        // Animation timing - tracked manually to ensure ticks happen at the right rate
-        let tick_duration = self.tick_rate;
+        let mut ticking = false;
         let mut last_tick = Instant::now();
 
         // Call on_mount for main_ui before starting the event loop
@@ -609,52 +640,43 @@ impl<M: MainUi + 'static> App<M> {
             self.main_ui.on_mount(&mut lifecycle_ctx);
         }
 
+        // Do initial tick to register animations and determine if ticking is needed
+        if self.tick_rate.is_some() {
+            let (needs_redraw, keep_ticking) =
+                self.do_tick(Duration::ZERO, terminal, task_manager, &mut should_quit)?;
+            ticking = keep_ticking;
+            if needs_redraw {
+                self.draw(terminal)?;
+            }
+        }
+
         loop {
             // Clean up finished runtime tasks periodically
             task_manager.cleanup_finished();
 
             let mut needs_redraw = false;
 
-            // Calculate how long until next tick (or wait indefinitely if no animations)
-            let wait_duration = tick_duration.map(|d| {
-                let elapsed = last_tick.elapsed();
-                if elapsed >= d {
-                    Duration::ZERO
-                } else {
-                    d - elapsed
-                }
-            });
-
-            // Wait for either an event or the next tick time
-            let before_wait = Instant::now();
-            let event = if let Some(wait) = wait_duration {
+            // Wait for event (and optionally tick timeout)
+            let event = if ticking {
+                let wait = self
+                    .tick_rate
+                    .map(|d| d.saturating_sub(last_tick.elapsed()))
+                    .unwrap_or(Duration::from_millis(16));
                 if wait.is_zero() {
-                    // Tick is due now, don't wait - just check for events non-blocking
                     event_rx.try_recv().ok()
                 } else {
                     tokio::select! {
                         biased;
-
-                        // Timeout for next animation tick
                         _ = tokio::time::sleep(wait) => None,
-
-                        // Event from channel
                         event = event_rx.recv() => event,
                     }
                 }
             } else {
-                // No animations - just wait for events
+                // IDLE MODE: block until event — zero CPU
                 event_rx.recv().await
             };
-            let wait_time = before_wait.elapsed();
-            if let Some(ref evt) = event {
-                if wait_time.as_micros() > 500 {
-                    let evt_str = format!("{:?}", evt);
-                    tracing::debug!(event_type = %evt_str, ?wait_time, "event received after long wait");
-                }
-            }
 
-            // Process the event if we got one
+            // Process event
             if let Some(event) = event {
                 needs_redraw |= self.process_app_event(
                     event,
@@ -663,25 +685,27 @@ impl<M: MainUi + 'static> App<M> {
                     build_time_handles,
                     &mut should_quit,
                 )?;
-            } else if wait_duration.is_none() {
-                // Channel closed and no animations
+            } else if !ticking {
+                // Channel closed while idle
                 tracing::trace!("main_loop: event channel closed");
                 break;
             }
 
-            // Always check if animation tick is due (after processing event)
-            // This ensures ticks happen even when events are queued
-            if let Some(d) = tick_duration {
-                if last_tick.elapsed() >= d {
-                    tracing::trace!("main_loop: animation tick");
-                    last_tick = Instant::now();
-                    needs_redraw |= self.process_app_event(
-                        AppEvent::Tick,
-                        terminal,
-                        task_manager,
-                        build_time_handles,
-                        &mut should_quit,
-                    )?;
+            // Tick (always, after event or timeout) if tick_rate is configured
+            if self.tick_rate.is_some() {
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_tick);
+                last_tick = now;
+
+                let (tick_redraw, keep_ticking) =
+                    self.do_tick(elapsed, terminal, task_manager, &mut should_quit)?;
+                needs_redraw |= tick_redraw;
+
+                // Transition idle <-> tick mode
+                let was_ticking = ticking;
+                ticking = keep_ticking;
+                if ticking && !was_ticking {
+                    last_tick = Instant::now(); // Fresh start for tick timing
                 }
             }
 
@@ -758,22 +782,9 @@ impl<M: MainUi + 'static> App<M> {
                 Ok(redraw)
             }
             AppEvent::Tick => {
-                // Tick animations first
-                let tick_duration = self.tick_rate.unwrap_or(Duration::from_millis(16));
-                let _needs_redraw = self.animation_controller.tick(tick_duration);
-
-                let mut ctx = AppContext::with_task_manager_and_overlays(
-                    terminal,
-                    &mut self.tab_manager,
-                    &mut self.focus_manager,
-                    &mut self.modal_manager,
-                    task_manager,
-                    &mut self.animation_controller,
-                    &mut self.dev_overlay_manager,
-                );
-                self.main_ui.tick(&mut ctx);
-                *should_quit = ctx.should_quit();
-                Ok(true)
+                // Ticks are now handled by do_tick() in the main loop.
+                // This arm is kept for completeness but should not be reached.
+                Ok(false)
             }
         }
     }
@@ -797,11 +808,53 @@ impl<M: MainUi + 'static> App<M> {
             }
         }
         //
+        // Phase -0.5: Mouse selection (feature-gated, mouse-capture-gated)
+        // Selection handles mouse events and Ctrl+C when selection is active
+        #[cfg(feature = "selection")]
+        {
+            if terminal.mouse_capture_enabled() {
+                // Handle mouse events for selection
+                if let Event::Mouse(mouse_event) = event {
+                    if self.selection_manager.handle_mouse_event(mouse_event) {
+                        // Selection consumed the event
+                        return Ok(true);
+                    }
+                }
+
+                // Handle Ctrl+C when selection is active (copy instead of quit)
+                if let Event::Key(key) = event {
+                    if key.code == crate::event::KeyCode::Char('c')
+                        && key.modifiers.contains(crate::event::KeyModifiers::CONTROL)
+                        && self.selection_manager.has_selection()
+                    {
+                        // Copy to clipboard and clear selection
+                        #[cfg(feature = "clipboard")]
+                        {
+                            if let Some(text) = self.selection_manager.selected_text() {
+                                if let Err(e) = crate::selection::clipboard::copy_to_clipboard(text)
+                                {
+                                    tracing::warn!("Failed to copy to clipboard: {}", e);
+                                }
+                            }
+                        }
+                        self.selection_manager.clear_selection();
+                        return Ok(true);
+                    }
+                }
+
+                // Clear selection on any other key event
+                if matches!(event, Event::Key(_)) && self.selection_manager.has_selection() {
+                    self.selection_manager.clear_selection();
+                }
+            }
+        }
+
+        //
         // Phase 0: Modal handles the event first (if open)
         let modal_consumed = self.modal_manager.handle_event(event);
 
         // Phase 1: MainUi handles the event
-        let _main_result = {
+        let main_result = {
             let mut ctx = AppContext::with_task_manager_and_overlays(
                 terminal,
                 &mut self.tab_manager,
@@ -821,11 +874,40 @@ impl<M: MainUi + 'static> App<M> {
             result
         };
 
-        // Phase 2: If MainUi didn't handle it, events are not propagated further
-        // Tabs now receive events through the MainUi or through TabContent widget
-        // which calls ctx.tabs().forward_event()
+        // Only redraw if something actually handled the event
+        Ok(modal_consumed || main_result.is_handled() || *should_quit)
+    }
 
-        Ok(true)
+    /// Execute a single tick cycle.
+    ///
+    /// Returns `(needs_redraw, needs_more_ticks)`.
+    fn do_tick(
+        &mut self,
+        elapsed: Duration,
+        terminal: &mut Terminal,
+        task_manager: &mut TaskManager,
+        should_quit: &mut bool,
+    ) -> Result<(bool, bool), AppError> {
+        self.last_frame_trigger = Some(FrameTrigger::Tick);
+
+        let animations_changed = self.animation_controller.tick(elapsed);
+
+        let mut ctx = AppContext::with_task_manager_and_overlays(
+            terminal,
+            &mut self.tab_manager,
+            &mut self.focus_manager,
+            &mut self.modal_manager,
+            task_manager,
+            &mut self.animation_controller,
+            &mut self.dev_overlay_manager,
+        );
+        let ui_changed = self.main_ui.tick(&mut ctx);
+        *should_quit |= ctx.should_quit();
+
+        let needs_redraw = animations_changed || ui_changed || *should_quit;
+        let needs_more_ticks = self.animation_controller.needs_ticking() || ui_changed;
+
+        Ok((needs_redraw, needs_more_ticks))
     }
 
     /// Draw the UI.
@@ -833,6 +915,11 @@ impl<M: MainUi + 'static> App<M> {
         use std::time::Instant;
 
         let draw_start = Instant::now();
+
+        // Clear selection regions at the START of draw so regions registered during
+        // this frame survive until the next frame's event handling.
+        #[cfg(feature = "selection")]
+        self.selection_manager.clear_regions();
 
         // Get the trigger for this frame, or use a default
         let trigger = self
@@ -847,12 +934,24 @@ impl<M: MainUi + 'static> App<M> {
             self.theme.clone()
         };
 
+        // Create draw context with selection support
+        #[cfg(feature = "selection")]
+        let draw_ctx = DrawContext::with_selection(
+            &self.tab_manager,
+            &self.focus_manager,
+            &main_theme,
+            &self.selection_manager.registry,
+        );
+
+        #[cfg(not(feature = "selection"))]
         let draw_ctx = DrawContext::new(&self.tab_manager, &self.focus_manager, &main_theme);
 
         let before_terminal_draw = Instant::now();
         let mut main_ui_time = Duration::ZERO;
         let mut modal_time = Duration::ZERO;
         let mut overlay_time = Duration::ZERO;
+        #[cfg(feature = "selection")]
+        let mut extracted_text: Option<String> = None;
 
         terminal.draw(|frame| {
             let area = frame.area();
@@ -871,7 +970,50 @@ impl<M: MainUi + 'static> App<M> {
             // Draw developer overlays on top of everything
             self.dev_overlay_manager.draw(frame, area, &self.theme);
             overlay_time = t3.elapsed();
+
+            // Selection highlight overlay: swap fg/bg on selected cells in buffer
+            // Also extract selected text from the buffer for clipboard operations
+            #[cfg(feature = "selection")]
+            {
+                crate::selection::rendering::draw_selection_overlay(frame, &self.selection_manager);
+
+                // Extract text from buffer for the active selection.
+                // Copy selection and region data first to avoid borrow conflicts with set_selected_text.
+                let extract_info = self.selection_manager.selection().and_then(|sel| {
+                    let selection = *sel;
+                    let region_id = self.selection_manager.active_region()?.clone();
+                    let region_ref = self.selection_manager.region_by_id(&region_id)?;
+                    let region_clone = crate::selection::SelectionRegion::new(
+                        region_ref.id.clone(),
+                        region_ref.rect,
+                        region_ref.z_order,
+                    );
+                    drop(region_ref);
+                    Some((selection, region_clone))
+                });
+
+                if let Some((selection, region)) = extract_info {
+                    let text = crate::selection::rendering::extract_selected_text(
+                        frame.buffer_mut(),
+                        &region,
+                        &selection,
+                    );
+                    if !text.is_empty() {
+                        extracted_text = Some(text);
+                    } else {
+                        tracing::debug!("selection: extracted text is empty");
+                    }
+                } else {
+                    tracing::trace!("selection: no extract_info (no selection/region)");
+                }
+            }
         })?;
+
+        // Set extracted text on selection manager after draw closure to avoid borrow conflicts
+        #[cfg(feature = "selection")]
+        if let Some(text) = extracted_text {
+            self.selection_manager.set_selected_text(text);
+        }
         let terminal_draw_time = before_terminal_draw.elapsed();
 
         // Record frame timing

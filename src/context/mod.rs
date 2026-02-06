@@ -682,11 +682,14 @@ pub struct DrawContext<'a> {
     pub(crate) tab_manager: &'a TabManager,
     pub(crate) focus_manager: &'a FocusManager,
     pub(crate) theme: &'a Theme,
+    /// Selection registry for registering selectable regions (only with "selection" feature)
+    #[cfg(feature = "selection")]
+    pub(crate) selection_registry: Option<&'a std::cell::RefCell<crate::selection::RegionRegistry>>,
 }
 
 impl<'a> DrawContext<'a> {
     /// Create a new draw context.
-    #[allow(dead_code)]
+    #[cfg(not(feature = "selection"))]
     pub(crate) fn new(
         tab_manager: &'a TabManager,
         focus_manager: &'a FocusManager,
@@ -696,6 +699,22 @@ impl<'a> DrawContext<'a> {
             tab_manager,
             focus_manager,
             theme,
+        }
+    }
+
+    /// Create a new draw context with selection support.
+    #[cfg(feature = "selection")]
+    pub(crate) fn with_selection(
+        tab_manager: &'a TabManager,
+        focus_manager: &'a FocusManager,
+        theme: &'a Theme,
+        selection_registry: &'a std::cell::RefCell<crate::selection::RegionRegistry>,
+    ) -> Self {
+        Self {
+            tab_manager,
+            focus_manager,
+            theme,
+            selection_registry: Some(selection_registry),
         }
     }
 
@@ -731,6 +750,40 @@ impl<'a> DrawContext<'a> {
     pub fn focus(&self) -> FocusDrawContext<'_> {
         FocusDrawContext {
             manager: self.focus_manager,
+        }
+    }
+
+    /// Register a selection region for mouse-based text selection.
+    ///
+    /// This is only available when the `selection` feature is enabled.
+    /// Regions are cleared at the end of each frame and must be re-registered
+    /// during each `draw()` call.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier for this region
+    /// * `rect` - The screen rectangle of this region
+    /// * `z_order` - Z-order for layering (higher values are on top)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn draw(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
+    ///     let [main_area, sidebar_area] = layout_areas(area);
+    ///     
+    ///     // Register regions for selection
+    ///     ctx.register_selection_region("main", main_area, 0);
+    ///     ctx.register_selection_region("sidebar", sidebar_area, 10);
+    ///     
+    ///     // Draw your content...
+    /// }
+    /// ```
+    #[cfg(feature = "selection")]
+    pub fn register_selection_region(&self, id: &str, rect: ratatui::layout::Rect, z_order: u16) {
+        if let Some(registry) = self.selection_registry {
+            registry
+                .borrow_mut()
+                .register(crate::selection::RegionId::from(id), rect, z_order);
         }
     }
 }

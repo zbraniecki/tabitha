@@ -102,6 +102,8 @@ pub mod dev_console_layer;
 pub mod event;
 pub mod focus;
 pub mod macros;
+#[cfg(feature = "selection")]
+pub mod selection;
 pub mod sidebar;
 pub mod tabs;
 pub mod task;
@@ -135,6 +137,14 @@ pub use task::{Task, TaskContext, TaskHandle};
 pub use task_manager::{SpawnError, TaskManager, TaskManagerContext};
 pub use terminal::{install_panic_hook, Terminal, TerminalConfig, TerminalError};
 pub use theme::{Status, Theme};
+
+// Re-export selection types when the feature is enabled
+#[cfg(feature = "selection")]
+pub use selection::{
+    manager::{SelectionConfig, SelectionManager},
+    region::{RegionId, RegionRegistry, SelectionRegion},
+    types::{MouseSelectionPhase, SelectionPos, SelectionRange},
+};
 
 // The match_task_message macro is automatically exported at crate root by #[macro_export]
 

@@ -149,6 +149,7 @@ impl Component for AnimationApp {
                 // Toggle sidebar visibility
                 KeyCode::Char('b') => {
                     self.sidebar_state.toggle();
+                    self.last_tick = Instant::now();
                     EventResult::Handled
                 }
                 // Decrease width
@@ -156,6 +157,7 @@ impl Component for AnimationApp {
                     if self.width_level > 0 {
                         self.width_level -= 1;
                         self.update_sidebar_width();
+                        self.last_tick = Instant::now();
                     }
                     EventResult::Handled
                 }
@@ -164,6 +166,7 @@ impl Component for AnimationApp {
                     if self.width_level < 2 {
                         self.width_level += 1;
                         self.update_sidebar_width();
+                        self.last_tick = Instant::now();
                     }
                     EventResult::Handled
                 }
@@ -208,21 +211,27 @@ impl Component for AnimationApp {
         }
     }
 
-    fn tick(&mut self, ctx: &mut AppContext) {
+    fn tick(&mut self, ctx: &mut AppContext) -> bool {
         // Update sidebar animations with elapsed time since last tick
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_tick);
         self.last_tick = now;
         self.sidebar_state.tick(elapsed);
+        let sidebar_animating = self.sidebar_state.is_animating();
 
         // Update progress bar and textbox animations
-        if let Some(mut anim_ctx) = ctx.control_animations() {
-            self.progress_bar_backforth.tick(&mut anim_ctx);
-            self.progress_bar_marquee.tick(&mut anim_ctx);
-            self.progress_bar_pulse.tick(&mut anim_ctx);
-            self.textbox1.tick(&mut anim_ctx);
-            self.textbox2.tick(&mut anim_ctx);
-        }
+        let controls_changed = if let Some(mut anim_ctx) = ctx.control_animations() {
+            let a = self.progress_bar_backforth.tick(&mut anim_ctx);
+            let b = self.progress_bar_marquee.tick(&mut anim_ctx);
+            let c = self.progress_bar_pulse.tick(&mut anim_ctx);
+            let d = self.textbox1.tick(&mut anim_ctx);
+            let e = self.textbox2.tick(&mut anim_ctx);
+            a || b || c || d || e
+        } else {
+            false
+        };
+
+        sidebar_animating || controls_changed
     }
 }
 

@@ -232,11 +232,14 @@ impl Component for LoginForm {
         EventResult::Unhandled
     }
 
-    fn tick(&mut self, ctx: &mut AppContext) {
+    fn tick(&mut self, ctx: &mut AppContext) -> bool {
         // Tick the text boxes for cursor blinking
         if let Some(mut anim_ctx) = ctx.control_animations() {
-            self.username.tick(&mut anim_ctx);
-            self.password.tick(&mut anim_ctx);
+            let a = self.username.tick(&mut anim_ctx);
+            let b = self.password.tick(&mut anim_ctx);
+            a || b
+        } else {
+            false
         }
     }
 }

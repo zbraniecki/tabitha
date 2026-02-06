@@ -312,6 +312,18 @@ impl AnimationController {
         needs_redraw
     }
 
+    /// Check if the controller needs periodic ticking.
+    ///
+    /// Returns `true` if animations are enabled and any animation
+    /// is active (not paused and not complete).
+    pub fn needs_ticking(&self) -> bool {
+        self.is_enabled()
+            && self
+                .animations
+                .values()
+                .any(|a| !a.is_paused() && !a.is_complete())
+    }
+
     /// Reset all animations to initial state.
     pub fn reset_all(&mut self) {
         for animation in self.animations.values_mut() {

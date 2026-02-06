@@ -108,10 +108,10 @@ impl Default for TextBoxConfig {
             cursor_mode: CursorAnimationMode::default(),
             cursor_fade: Some(CursorFadeConfig::default()),
             focused_style: Style::default().fg(Color::White),
-            unfocused_style: Style::default().fg(Color::Gray),
+            unfocused_style: Style::default().fg(Color::White),
             focused_border_style: Style::default().fg(Color::Yellow),
-            unfocused_border_style: Style::default().fg(Color::DarkGray),
-            placeholder_style: Style::default().fg(Color::DarkGray),
+            unfocused_border_style: Style::default().fg(Color::White),
+            placeholder_style: Style::default().fg(Color::Rgb(100, 100, 100)),
             cursor_style: Style::default().bg(Color::White).fg(Color::Black),
             password_mask: None,
             max_length: None,
@@ -689,6 +689,8 @@ impl TextBox {
 
         // Set the fade out duration as well
         animation.set_fade_out_duration(Duration::from_millis(fade_out_ms));
+        // Start at full brightness so cursor is visible immediately
+        animation.set_progress(1.0);
         animation
     }
 
@@ -811,6 +813,9 @@ impl Control for TextBox {
                 let mut spans = Vec::new();
 
                 #[cfg(feature = "selection")]
+                let mut rendered_with_selection = false;
+
+                #[cfg(feature = "selection")]
                 if has_selection {
                     // Selection is active - render with selection highlighting
                     let (sel_start, sel_end) = sel_range.unwrap();
@@ -833,9 +838,15 @@ impl Control for TextBox {
 
                         spans.push(Span::styled(ch.to_string(), style));
                     }
+                    rendered_with_selection = true;
                 }
+
+                #[cfg(feature = "selection")]
+                let needs_cursor_render = !rendered_with_selection;
                 #[cfg(not(feature = "selection"))]
-                {
+                let needs_cursor_render = true;
+
+                if needs_cursor_render {
                     // Cursor position relative to scroll
                     let cursor_rel = self.cursor_pos.saturating_sub(scroll);
                     // No selection - render normally with cursor

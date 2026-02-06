@@ -506,7 +506,7 @@ impl SidebarState {
                 let step = delta
                     * (elapsed.as_millis() as f32 / self.animation_duration.as_millis() as f32);
 
-                if step.abs() < 0.1 || current_percent >= target_percent {
+                if delta.abs() < 0.5 || current_percent >= target_percent {
                     self.effective_width_percent = target_percent;
                     self.visibility = SidebarVisibility::Visible;
                     // Update width to match target after show completes
@@ -519,7 +519,7 @@ impl SidebarState {
                 let step = delta
                     * (elapsed.as_millis() as f32 / self.animation_duration.as_millis() as f32);
 
-                if step.abs() < 0.1 || current_percent <= 0.0 {
+                if delta.abs() < 0.5 || current_percent <= 0.0 {
                     self.effective_width_percent = 0.0;
                     self.visibility = SidebarVisibility::Hidden;
                 } else {
@@ -538,7 +538,7 @@ impl SidebarState {
             let step =
                 delta * (elapsed.as_millis() as f32 / self.animation_duration.as_millis() as f32);
 
-            if step.abs() < 0.1 || elapsed >= self.animation_duration {
+            if delta.abs() < 0.5 || elapsed >= self.animation_duration {
                 // Animation complete
                 self.effective_width_percent = target_percent;
                 self.width = self.target_width;

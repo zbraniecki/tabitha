@@ -184,16 +184,10 @@ impl Component for AnimationApp {
                 KeyCode::Char('a') => {
                     if let Some(mut anim_ctx) = ctx.control_animations() {
                         self.animation_mode = anim_ctx.cycle_mode();
-                        // Update sidebar animation settings based on mode
+                        // Only Full mode animates sidebar transitions;
+                        // Reduced and None jump instantly.
                         self.sidebar_state
-                            .set_animations_enabled(!self.animation_mode.is_disabled());
-                        // Adjust animation duration based on mode
-                        let duration = match self.animation_mode {
-                            AnimationMode::Full => Duration::from_millis(200),
-                            AnimationMode::Reduced => Duration::from_millis(100),
-                            AnimationMode::None => Duration::from_millis(0),
-                        };
-                        self.sidebar_state.set_animation_duration(duration);
+                            .set_animations_enabled(self.animation_mode == AnimationMode::Full);
                     }
                     EventResult::Handled
                 }

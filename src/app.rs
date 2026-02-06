@@ -720,7 +720,17 @@ impl<M: MainUi + 'static> App<M> {
 
             // Redraw if needed
             if needs_redraw {
+                #[cfg(feature = "clipboard")]
+                let had_selection = self.selection_manager.has_selection();
+
                 self.draw(terminal)?;
+
+                // If auto-copy cleared the selection during draw, redraw
+                // immediately to remove the selection overlay from the screen.
+                #[cfg(feature = "clipboard")]
+                if had_selection && !self.selection_manager.has_selection() {
+                    self.draw(terminal)?;
+                }
             }
         }
 

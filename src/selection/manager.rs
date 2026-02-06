@@ -242,7 +242,7 @@ impl SelectionManager {
     /// Set the selected text (called after rendering to extract text from buffer).
     ///
     /// If auto-copy is pending (from a MouseUp with `auto_copy_on_finalize`),
-    /// this will also copy the text to the system clipboard.
+    /// this will copy the text to the system clipboard and clear the selection.
     pub fn set_selected_text(&mut self, text: String) {
         tracing::debug!(len = text.len(), "selection: extracted text from buffer");
         self.selected_text = Some(text);
@@ -257,6 +257,7 @@ impl SelectionManager {
                     match crate::selection::clipboard::copy_to_clipboard(text) {
                         Ok(()) => {
                             tracing::info!("selection: clipboard copy succeeded");
+                            self.clear_selection();
                         }
                         Err(e) => {
                             tracing::warn!("selection: clipboard copy failed: {}", e);

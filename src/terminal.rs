@@ -6,7 +6,8 @@
 use std::io::{self, Stdout};
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    cursor::SetCursorStyle,
+    event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -59,9 +60,14 @@ impl Terminal {
         let mut stdout = io::stdout();
 
         if config.mouse_capture {
-            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+            execute!(
+                stdout,
+                EnterAlternateScreen,
+                EnableMouseCapture,
+                EnableFocusChange
+            )?;
         } else {
-            execute!(stdout, EnterAlternateScreen)?;
+            execute!(stdout, EnterAlternateScreen, EnableFocusChange)?;
         }
 
         let backend = CrosstermBackend::new(stdout);
@@ -133,7 +139,9 @@ impl Terminal {
         execute!(
             self.terminal.backend_mut(),
             LeaveAlternateScreen,
-            DisableMouseCapture
+            DisableMouseCapture,
+            DisableFocusChange,
+            SetCursorStyle::DefaultUserShape
         )?;
         self.terminal.show_cursor()?;
         Ok(())
@@ -159,7 +167,12 @@ pub fn install_panic_hook() {
         tracing::trace!("panic hook restoring terminal");
         // Best effort to restore terminal
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableFocusChange
+        );
 
         original_hook(panic_info);
     }));

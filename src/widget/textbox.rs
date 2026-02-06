@@ -30,10 +30,10 @@
 use std::cell::Cell;
 use std::time::Instant;
 
+use crossterm::cursor::{Hide, SetCursorStyle, Show};
 use ratatui::{
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Style},
-    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
@@ -71,6 +71,21 @@ pub enum TextBoxEvent {
 
 impl ControlEvent for TextBoxEvent {}
 
+/// Cursor shape options for the terminal cursor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CursorShape {
+    /// Block cursor (█)
+    Block,
+    /// Bar cursor (|)
+    Bar,
+}
+
+impl Default for CursorShape {
+    fn default() -> Self {
+        CursorShape::Block
+    }
+}
+
 /// Configuration for TextBox appearance and behavior.
 #[derive(Debug, Clone)]
 pub struct TextBoxConfig {
@@ -92,6 +107,8 @@ pub struct TextBoxConfig {
     pub placeholder_style: Style,
     /// Style for the cursor.
     pub cursor_style: Style,
+    /// Cursor shape (Block or Bar).
+    pub cursor_shape: CursorShape,
     /// Whether to mask input (password field).
     pub password_mask: Option<char>,
     /// Maximum length of input (None for unlimited).
@@ -99,6 +116,8 @@ pub struct TextBoxConfig {
     /// Style for selected text (when selection feature is enabled).
     #[cfg(feature = "selection")]
     pub selection_style: Style,
+    /// Whether to show the border around the textbox.
+    pub show_border: bool,
 }
 
 impl Default for TextBoxConfig {
@@ -113,10 +132,12 @@ impl Default for TextBoxConfig {
             unfocused_border_style: Style::default().fg(Color::White),
             placeholder_style: Style::default().fg(Color::Rgb(100, 100, 100)),
             cursor_style: Style::default().bg(Color::White).fg(Color::Black),
+            cursor_shape: CursorShape::default(),
             password_mask: None,
             max_length: None,
             #[cfg(feature = "selection")]
             selection_style: Style::default().bg(Color::Blue).fg(Color::White),
+            show_border: true,
         }
     }
 }
@@ -279,6 +300,9 @@ impl TextBoxBuilder {
             scroll_offset: Cell::new(0),
             cursor_visible: true,
             blink_accumulated: Duration::ZERO,
+            is_focused: false,
+            terminal_focused: true,
+            cursor_screen_pos: Cell::new(None),
             #[cfg(feature = "selection")]
             selection_anchor: None,
         }
@@ -318,6 +342,12 @@ pub struct TextBox {
     cursor_visible: bool,
     /// Accumulated time for reduced mode blink.
     blink_accumulated: Duration,
+    /// Whether the textbox currently has focus (widget-level).
+    is_focused: bool,
+    /// Whether the terminal/app has focus (window-level).
+    terminal_focused: bool,
+    /// Cursor screen position (x, y) for terminal cursor placement (Cell for interior mutability).
+    cursor_screen_pos: Cell<Option<(u16, u16)>>,
     /// Anchor position for text selection (when selection feature is enabled).
     #[cfg(feature = "selection")]
     selection_anchor: Option<usize>,
@@ -346,6 +376,9 @@ impl TextBox {
             scroll_offset: Cell::new(0),
             cursor_visible: true,
             blink_accumulated: Duration::ZERO,
+            is_focused: false,
+            terminal_focused: true,
+            cursor_screen_pos: Cell::new(None),
             #[cfg(feature = "selection")]
             selection_anchor: None,
         }
@@ -709,7 +742,7 @@ impl Control for TextBox {
 
     fn draw(&self, frame: &mut Frame, area: Rect, focused: bool) {
         // Determine styles based on focus
-        let (text_style, border_style) = if focused {
+        let (text_style, _border_style) = if focused {
             (self.config.focused_style, self.config.focused_border_style)
         } else {
             (
@@ -718,20 +751,27 @@ impl Control for TextBox {
             )
         };
 
-        // Create block with optional title
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
+        let (inner, visible_width) = if self.config.show_border {
+            // Create block with optional title
+            let mut block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(if focused {
+                    self.config.focused_border_style
+                } else {
+                    self.config.unfocused_border_style
+                });
 
-        if let Some(ref title) = self.title {
-            block = block.title(format!(" {} ", title));
-        }
+            if let Some(ref title) = self.title {
+                block = block.title(format!(" {} ", title));
+            }
 
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        // Calculate visible width (accounting for borders)
-        let visible_width = inner.width as usize;
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            (inner, inner.width as usize)
+        } else {
+            // No border - use full area
+            (area, area.width as usize)
+        };
 
         // Get display text
         let display = self.display_text();
@@ -749,144 +789,76 @@ impl Control for TextBox {
         }
         let scroll_offset = self.scroll_offset.get();
 
-        // Determine what to show - cursor always shows, but may be invisible (dim)
-        let cursor_style = self.config.cursor_style.bg(self.cursor_color);
-        let should_show_cursor = true;
+        // Check if we have full focus (widget-level AND terminal-level)
+        let has_full_focus = focused && self.terminal_focused;
 
+        // Render text content without cursor characters
         if is_empty {
-            // Empty text - show placeholder (with cursor on first char when focused)
+            // Empty text - show placeholder if available
             if let Some(ref placeholder) = self.placeholder {
-                if focused {
-                    // Cursor on the first character of the placeholder
-                    let mut chars = placeholder.chars();
-                    if let Some(first_char) = chars.next() {
-                        let rest: String = chars.collect();
-                        let first_style = if should_show_cursor {
-                            cursor_style
-                        } else {
-                            self.config.placeholder_style
-                        };
-                        let spans = vec![
-                            Span::styled(first_char.to_string(), first_style),
-                            Span::styled(rest, self.config.placeholder_style),
-                        ];
-                        let line = Line::from(spans);
-                        let para = Paragraph::new(line);
-                        frame.render_widget(para, inner);
-                    }
-                } else {
-                    // Not focused - show placeholder normally
-                    let para =
-                        Paragraph::new(placeholder.as_str()).style(self.config.placeholder_style);
-                    frame.render_widget(para, inner);
-                }
-            } else if focused && should_show_cursor {
-                // No placeholder, just show cursor block
-                let cursor_span = Span::styled(" ", cursor_style);
-                let line = Line::from(vec![cursor_span]);
-                let para = Paragraph::new(line);
+                let para =
+                    Paragraph::new(placeholder.as_str()).style(self.config.placeholder_style);
                 frame.render_widget(para, inner);
             }
         } else {
-            // Has text - show text with cursor when focused
+            // Has text - show visible portion
             let chars: Vec<char> = display.chars().collect();
             let scroll = scroll_offset.min(chars.len());
-
-            // Build visible portion
             let visible_chars: String = chars.iter().skip(scroll).take(visible_width).collect();
 
-            #[cfg(feature = "selection")]
-            let has_selection = self.has_selection();
-            #[cfg(not(feature = "selection"))]
-            let has_selection = false;
+            let para = Paragraph::new(visible_chars).style(text_style);
+            frame.render_widget(para, inner);
+        }
 
-            if focused || has_selection {
-                // Get selection range relative to visible area
-                #[cfg(feature = "selection")]
-                let sel_range = self.selection_range();
+        // Calculate cursor screen position (always needed for cursor display)
+        let cursor_screen_x = if is_empty {
+            // At start of empty textbox
+            inner.x
+        } else {
+            // At cursor position in text
+            let cursor_rel = self.cursor_pos.saturating_sub(scroll_offset);
+            inner.x + cursor_rel as u16
+        };
+        let cursor_screen_y = inner.y;
 
-                #[cfg(feature = "selection")]
-                let visible_start = scroll;
-                let _visible_end = (scroll + visible_width).min(chars.len());
+        // Store cursor position
+        self.cursor_screen_pos
+            .set(Some((cursor_screen_x, cursor_screen_y)));
 
-                // Build spans with proper styling
-                let mut spans = Vec::new();
+        // Handle terminal cursor positioning and styling
+        if has_full_focus {
+            // Set terminal cursor position
+            frame.set_cursor_position(Position::new(cursor_screen_x, cursor_screen_y));
 
-                #[cfg(feature = "selection")]
-                let mut rendered_with_selection = false;
+            // Set cursor style based on configuration
+            let cursor_style_cmd = match self.config.cursor_shape {
+                CursorShape::Block => SetCursorStyle::BlinkingBlock,
+                CursorShape::Bar => SetCursorStyle::BlinkingBar,
+            };
 
-                #[cfg(feature = "selection")]
-                if has_selection {
-                    // Selection is active - render with selection highlighting
-                    let (sel_start, sel_end) = sel_range.unwrap();
-                    let sel_style = self.config.selection_style;
+            // Execute cursor commands via crossterm
+            if let Err(e) = crossterm::execute!(std::io::stdout(), Show, cursor_style_cmd) {
+                tracing::warn!("Failed to set terminal cursor: {}", e);
+            }
+        } else {
+            // Widget not focused - show steady (non-blinking) cursor at last position
+            if let Some((x, y)) = self.cursor_screen_pos.get() {
+                frame.set_cursor_position(Position::new(x, y));
 
-                    for (idx, ch) in visible_chars.chars().enumerate() {
-                        let absolute_idx = visible_start + idx;
-                        let is_selected = absolute_idx >= sel_start && absolute_idx < sel_end;
+                // Use steady (non-blinking) cursor style
+                let cursor_style_cmd = match self.config.cursor_shape {
+                    CursorShape::Block => SetCursorStyle::SteadyBlock,
+                    CursorShape::Bar => SetCursorStyle::SteadyBar,
+                };
 
-                        // Check if this is the cursor position
-                        let is_cursor = absolute_idx == self.cursor_pos;
-
-                        let style = if is_cursor && focused {
-                            cursor_style
-                        } else if is_selected {
-                            sel_style
-                        } else {
-                            text_style
-                        };
-
-                        spans.push(Span::styled(ch.to_string(), style));
-                    }
-                    rendered_with_selection = true;
+                if let Err(e) = crossterm::execute!(std::io::stdout(), Show, cursor_style_cmd) {
+                    tracing::warn!("Failed to set terminal cursor: {}", e);
                 }
-
-                #[cfg(feature = "selection")]
-                let needs_cursor_render = !rendered_with_selection;
-                #[cfg(not(feature = "selection"))]
-                let needs_cursor_render = true;
-
-                if needs_cursor_render {
-                    // Cursor position relative to scroll
-                    let cursor_rel = self.cursor_pos.saturating_sub(scroll);
-                    // No selection - render normally with cursor
-                    if cursor_rel <= visible_width {
-                        // Build spans: before cursor, cursor char, after cursor
-                        let before: String = visible_chars.chars().take(cursor_rel).collect();
-                        let cursor_char = visible_chars
-                            .chars()
-                            .nth(cursor_rel)
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| " ".to_string());
-                        let after: String = visible_chars.chars().skip(cursor_rel + 1).collect();
-
-                        // Cursor char uses cursor style based on animation mode
-                        let cursor_char_style = if should_show_cursor || !focused {
-                            cursor_style
-                        } else {
-                            text_style
-                        };
-
-                        if !before.is_empty() {
-                            spans.push(Span::styled(before, text_style));
-                        }
-                        spans.push(Span::styled(cursor_char, cursor_char_style));
-                        if !after.is_empty() {
-                            spans.push(Span::styled(after, text_style));
-                        }
-                    } else {
-                        // Cursor not in visible area
-                        spans.push(Span::styled(visible_chars, text_style));
-                    }
-                }
-
-                let line = Line::from(spans);
-                let para = Paragraph::new(line);
-                frame.render_widget(para, inner);
             } else {
-                // Not focused, no selection - render normally
-                let para = Paragraph::new(visible_chars).style(text_style);
-                frame.render_widget(para, inner);
+                // No cursor position stored - hide it
+                if let Err(e) = crossterm::execute!(std::io::stdout(), Hide) {
+                    tracing::warn!("Failed to hide terminal cursor: {}", e);
+                }
             }
         }
     }
@@ -1171,12 +1143,27 @@ impl Control for TextBox {
                 EventResult::Handled
             }
 
+            Event::FocusGained => {
+                self.terminal_focused = true;
+                EventResult::Handled
+            }
+
+            Event::FocusLost => {
+                self.terminal_focused = false;
+                EventResult::Handled
+            }
+
             _ => EventResult::Unhandled,
         }
     }
 
     fn tick(&mut self, ctx: &mut ControlAnimationContext<'_>) -> bool {
         const TYPING_IDLE_THRESHOLD_MS: u64 = 500;
+
+        // Skip animation when widget is not focused OR terminal has lost focus
+        if !self.is_focused || !self.terminal_focused {
+            return false;
+        }
 
         // Register animation on first tick if not already done
         if !self.animation_registered {
@@ -1265,14 +1252,17 @@ impl Control for TextBox {
     }
 
     fn on_focus(&mut self) {
-        // Reset to visible state
-        self.cursor_color = Color::Rgb(255, 255, 255);
+        // Set focus flag
+        self.is_focused = true;
         self.emit(TextBoxEvent::FocusGained);
     }
 
     fn on_blur(&mut self) {
-        // Hide cursor when not focused
-        self.cursor_color = Color::Rgb(0, 0, 0);
+        // Clear focus flag
+        self.is_focused = false;
+        self.cursor_screen_pos.set(None);
+        // Hide terminal cursor
+        let _ = crossterm::execute!(std::io::stdout(), Hide);
         self.emit(TextBoxEvent::FocusLost);
     }
 }

@@ -72,7 +72,7 @@ pub use progress_bar::{
 };
 pub use tab_bar::TabBar;
 pub use tab_content::TabContent;
-pub use textbox::{TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};
+pub use textbox::{CursorShape, TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};
 
 use ratatui::{layout::Rect, Frame};
 

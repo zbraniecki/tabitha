@@ -942,7 +942,7 @@ impl Control for TextBox {
                                     self.emit(TextBoxEvent::Changed(self.text.clone()));
                                     true
                                 }
-                                #[cfg(feature = "clipboard")]
+                                #[cfg(all(feature = "selection", feature = "clipboard"))]
                                 'c' => {
                                     // Copy selected text to clipboard
                                     if let Some(selected) = self.selected_text() {
@@ -959,7 +959,7 @@ impl Control for TextBox {
                                         false
                                     }
                                 }
-                                #[cfg(feature = "clipboard")]
+                                #[cfg(all(feature = "selection", feature = "clipboard"))]
                                 'x' => {
                                     // Cut selected text to clipboard
                                     if let Some(selected) = self.selected_text() {
@@ -1009,57 +1009,65 @@ impl Control for TextBox {
                     // Navigation
                     KeyCode::Left => {
                         #[cfg(feature = "selection")]
-                        let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
-                        #[cfg(feature = "selection")]
-                        if shift_pressed {
-                            self.ensure_anchor();
-                            self.move_left();
-                        } else {
-                            // Without shift, check if we need to collapse selection
-                            if self.has_selection() {
-                                // Move cursor to the start of selection and clear selection
-                                if let Some((start, _)) = self.selection_range() {
-                                    self.cursor_pos = start;
-                                }
-                                self.clear_selection();
-                            } else {
+                        {
+                            let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                            if shift_pressed {
+                                self.ensure_anchor();
                                 self.move_left();
+                            } else {
+                                // Without shift, check if we need to collapse selection
+                                if self.has_selection() {
+                                    // Move cursor to the start of selection and clear selection
+                                    if let Some((start, _)) = self.selection_range() {
+                                        self.cursor_pos = start;
+                                    }
+                                    self.clear_selection();
+                                } else {
+                                    self.move_left();
+                                }
+                            }
+                            if !shift_pressed
+                                && !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT)
+                            {
+                                self.clear_selection();
                             }
                         }
-                        #[cfg(feature = "selection")]
-                        if !shift_pressed
-                            && !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
+                        #[cfg(not(feature = "selection"))]
                         {
-                            self.clear_selection();
+                            self.move_left();
                         }
                         true
                     }
                     KeyCode::Right => {
                         #[cfg(feature = "selection")]
-                        let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
-                        #[cfg(feature = "selection")]
-                        if shift_pressed {
-                            self.ensure_anchor();
-                            self.move_right();
-                        } else {
-                            // Without shift, check if we need to collapse selection
-                            if self.has_selection() {
-                                // Move cursor to the end of selection and clear selection
-                                if let Some((_, end)) = self.selection_range() {
-                                    self.cursor_pos = end;
-                                }
-                                self.clear_selection();
-                            } else {
+                        {
+                            let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                            if shift_pressed {
+                                self.ensure_anchor();
                                 self.move_right();
+                            } else {
+                                // Without shift, check if we need to collapse selection
+                                if self.has_selection() {
+                                    // Move cursor to the end of selection and clear selection
+                                    if let Some((_, end)) = self.selection_range() {
+                                        self.cursor_pos = end;
+                                    }
+                                    self.clear_selection();
+                                } else {
+                                    self.move_right();
+                                }
+                            }
+                            if !shift_pressed
+                                && !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT)
+                            {
+                                self.clear_selection();
                             }
                         }
-                        #[cfg(feature = "selection")]
-                        if !shift_pressed
-                            && !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
+                        #[cfg(not(feature = "selection"))]
                         {
-                            self.clear_selection();
+                            self.move_right();
                         }
                         true
                     }
@@ -1095,24 +1103,42 @@ impl Control for TextBox {
                     // Editing
                     KeyCode::Backspace => {
                         #[cfg(feature = "selection")]
-                        if self.has_selection() {
-                            self.delete_selection();
-                            self.emit(TextBoxEvent::Changed(self.text.clone()));
-                        } else if key.modifiers.contains(KeyModifiers::CONTROL)
-                            || key.modifiers.contains(KeyModifiers::ALT)
                         {
-                            self.delete_word_back();
-                        } else {
-                            self.backspace();
+                            if self.has_selection() {
+                                self.delete_selection();
+                                self.emit(TextBoxEvent::Changed(self.text.clone()));
+                            } else if key.modifiers.contains(KeyModifiers::CONTROL)
+                                || key.modifiers.contains(KeyModifiers::ALT)
+                            {
+                                self.delete_word_back();
+                            } else {
+                                self.backspace();
+                            }
+                        }
+                        #[cfg(not(feature = "selection"))]
+                        {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                || key.modifiers.contains(KeyModifiers::ALT)
+                            {
+                                self.delete_word_back();
+                            } else {
+                                self.backspace();
+                            }
                         }
                         true
                     }
                     KeyCode::Delete => {
                         #[cfg(feature = "selection")]
-                        if self.has_selection() {
-                            self.delete_selection();
-                            self.emit(TextBoxEvent::Changed(self.text.clone()));
-                        } else {
+                        {
+                            if self.has_selection() {
+                                self.delete_selection();
+                                self.emit(TextBoxEvent::Changed(self.text.clone()));
+                            } else {
+                                self.delete_char();
+                            }
+                        }
+                        #[cfg(not(feature = "selection"))]
+                        {
                             self.delete_char();
                         }
                         true

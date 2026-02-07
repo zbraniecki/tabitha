@@ -36,6 +36,122 @@ use tabitha::{
 };
 
 // =============================================================================
+// ColorScheme and Theme System
+// =============================================================================
+
+/// User's color scheme preference
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
+enum ColorScheme {
+    Dark,
+    Light,
+}
+
+/// A complete set of colors for one theme variant (dark or light)
+#[allow(dead_code)]
+struct ThemeVariant {
+    // Background colors
+    app_bg: Color,
+    prompt_bg: Color,
+    // Text colors
+    text_normal: Color,
+    text_secondary: Color,
+    text_highlight: Color,
+    // Border/Accent colors
+    border_focused: Color,
+    border_unfocused: Color,
+    accent_primary: Color,
+    accent_secondary: Color,
+    // Special colors
+    success: Color,
+    mode_active: Color,
+}
+
+impl ThemeVariant {
+    fn dark() -> Self {
+        Self {
+            app_bg: Color::Rgb(10, 10, 10),            // #0a0a0a
+            prompt_bg: Color::Rgb(30, 30, 30),         // #1e1e1e
+            text_normal: Color::Rgb(255, 255, 255),    // Pure white
+            text_secondary: Color::Rgb(115, 115, 115), // #737373
+            text_highlight: Color::Cyan,
+            border_focused: Color::Cyan,
+            border_unfocused: Color::Gray,
+            accent_primary: Color::Yellow,
+            accent_secondary: Color::Blue,
+            success: Color::Green,
+            mode_active: Color::Yellow,
+        }
+    }
+
+    fn light() -> Self {
+        Self {
+            app_bg: Color::Rgb(245, 245, 245),    // Light gray
+            prompt_bg: Color::Rgb(220, 220, 220), // Slightly darker gray
+            text_normal: Color::Rgb(30, 30, 30),  // Dark text
+            text_secondary: Color::Rgb(100, 100, 100),
+            text_highlight: Color::Rgb(0, 100, 200),
+            border_focused: Color::Rgb(0, 100, 200),
+            border_unfocused: Color::Rgb(150, 150, 150),
+            accent_primary: Color::Rgb(200, 150, 0),
+            accent_secondary: Color::Rgb(50, 100, 200),
+            success: Color::Rgb(0, 150, 0),
+            mode_active: Color::Rgb(200, 150, 0),
+        }
+    }
+}
+
+/// A theme can be adaptive (supports both dark and light) or forced (single variant)
+#[allow(dead_code)]
+enum Theme {
+    /// Theme adapts to the color scheme preference
+    Adaptive {
+        dark: ThemeVariant,
+        light: ThemeVariant,
+    },
+    /// Theme forces a specific variant regardless of preference
+    Forced(ThemeVariant),
+}
+
+impl Theme {
+    /// Create a new adaptive theme with both dark and light variants
+    fn adaptive() -> Self {
+        Theme::Adaptive {
+            dark: ThemeVariant::dark(),
+            light: ThemeVariant::light(),
+        }
+    }
+
+    /// Check if this theme supports a specific color scheme
+    #[allow(dead_code)]
+    fn supports_scheme(&self, scheme: ColorScheme) -> bool {
+        match self {
+            Theme::Adaptive { .. } => true, // Adaptive themes support both
+            Theme::Forced(variant) => {
+                // Check if the forced variant matches the scheme
+                // We determine this by comparing app_bg color
+                let is_dark = matches!(variant.app_bg, Color::Rgb(0, 0, 0));
+                match scheme {
+                    ColorScheme::Dark => is_dark,
+                    ColorScheme::Light => !is_dark,
+                }
+            }
+        }
+    }
+
+    /// Get the color variant for a specific scheme
+    fn colors(&self, scheme: ColorScheme) -> &ThemeVariant {
+        match self {
+            Theme::Adaptive { dark, light } => match scheme {
+                ColorScheme::Dark => dark,
+                ColorScheme::Light => light,
+            },
+            Theme::Forced(variant) => variant, // Ignores scheme preference
+        }
+    }
+}
+
+// =============================================================================
 // Mock Data
 // =============================================================================
 
@@ -80,34 +196,36 @@ impl TodoItem {
         self.checked = !self.checked;
     }
 
-    fn draw(&self, is_active: bool, is_focused: bool) -> Line<'static> {
+    fn draw(&self, is_active: bool, is_focused: bool, theme: &ThemeVariant) -> Line<'static> {
         let checkbox = if self.checked { "[✓]" } else { "[ ]" };
         let text_style = if self.checked {
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(theme.text_secondary)
                 .add_modifier(Modifier::CROSSED_OUT)
+                .bg(theme.app_bg)
         } else if is_active && is_focused {
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(theme.text_highlight)
                 .add_modifier(Modifier::BOLD)
         } else if is_active {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.text_highlight)
                 .add_modifier(Modifier::BOLD)
+                .bg(theme.app_bg)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.text_normal).bg(theme.app_bg)
         };
 
         Line::from(vec![
             Span::styled(
                 format!("{} ", checkbox),
                 if is_active && is_focused {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                    Style::default().fg(Color::Black).bg(theme.text_highlight)
                 } else if self.checked {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(theme.success).bg(theme.app_bg)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme.text_normal).bg(theme.app_bg)
                 },
             ),
             Span::styled(self.text.to_string(), text_style),
@@ -167,7 +285,7 @@ impl Sidebar {
         }
     }
 
-    fn draw(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
+    fn draw(&self, frame: &mut Frame, area: Rect, is_focused: bool, theme: &ThemeVariant) {
         if !self.visible {
             return;
         }
@@ -176,10 +294,11 @@ impl Sidebar {
             .title(" TODO ")
             .borders(Borders::ALL)
             .border_style(if is_focused {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(theme.border_focused)
             } else {
-                Style::default().fg(Color::Gray)
-            });
+                Style::default().fg(theme.border_unfocused)
+            })
+            .style(Style::default().bg(theme.app_bg));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -190,7 +309,7 @@ impl Sidebar {
 
         for (idx, item) in self.items.iter().enumerate().take(visible_count) {
             let is_active = idx == self.active_index;
-            lines.push(item.draw(is_active, is_focused));
+            lines.push(item.draw(is_active, is_focused, theme));
         }
 
         let paragraph = Paragraph::new(lines);
@@ -252,8 +371,10 @@ impl MainContent {
         self.scroll_offset = (self.scroll_offset + amount).min(max_scroll);
     }
 
-    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext) {
-        let block = Block::default().borders(Borders::NONE);
+    fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext, theme: &ThemeVariant) {
+        let block = Block::default()
+            .borders(Borders::NONE)
+            .style(Style::default().bg(theme.app_bg));
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -268,7 +389,7 @@ impl MainContent {
             .map(|text| {
                 Line::from(Span::styled(
                     text.to_string(),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(theme.text_normal).bg(theme.app_bg),
                 ))
             })
             .collect();
@@ -318,22 +439,31 @@ impl MainContent {
 struct TopBar;
 
 impl TopBar {
-    fn draw(frame: &mut Frame, area: Rect) {
+    fn draw(frame: &mut Frame, area: Rect, theme: &ThemeVariant) {
+        // Fill with app background first
+        let bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(bg, area);
+
         // Left: Title
         let title = Span::styled(
             " OpenCode Editor ",
             Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+                .fg(theme.text_normal)
+                .add_modifier(Modifier::BOLD)
+                .bg(theme.app_bg),
         );
 
         // Right: Context metrics
         let metrics = Span::styled(
             " 12.4K  45%  $0.023  v1.0.0 ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_secondary).bg(theme.app_bg),
         );
 
-        let line = Line::from(vec![title, Span::raw(""), metrics]);
+        let line = Line::from(vec![
+            title,
+            Span::styled("", Style::default().bg(theme.app_bg)),
+            metrics,
+        ]);
         let paragraph = Paragraph::new(line);
         frame.render_widget(paragraph, area);
     }
@@ -371,18 +501,20 @@ impl PromptArea {
         }
     }
 
-    fn draw(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
+    fn draw(&self, frame: &mut Frame, area: Rect, is_focused: bool, theme: &ThemeVariant) {
         let mode_color = if self.mode == "Plan" {
-            Color::Yellow
+            theme.accent_primary
         } else {
-            Color::Blue
+            theme.accent_secondary
         };
 
-        // Layout: inner box area, shortcuts line below
+        let half_block_bg = theme.prompt_bg; // Use theme's prompt background
+
+        // Layout: inner box area (includes half-row bottom), shortcuts line below
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5), // Inner box (margin + textbox + margin + status + spacing)
+                Constraint::Length(5), // Inner box with half-row bottom integrated
                 Constraint::Length(1), // Shortcuts line (outside the box)
             ])
             .split(area);
@@ -390,10 +522,13 @@ impl PromptArea {
         let inner_box_area = vertical_chunks[0];
         let shortcuts_area = vertical_chunks[1];
 
-        // Draw the inner box with left border and default background
-        // Left border in mode color spanning the whole box
-        for y in inner_box_area.y..(inner_box_area.y + inner_box_area.height) {
-            let border_char = Paragraph::new("│").style(Style::default().fg(mode_color));
+        // The last row combines both the half border (╹) and half line (▀)
+        let box_height = inner_box_area.height;
+        let last_row_y = inner_box_area.y + box_height - 1;
+
+        // Draw left border: ┃ for all rows except last, ╹ for last row
+        for y in inner_box_area.y..last_row_y {
+            let border_char = Paragraph::new("┃").style(Style::default().fg(mode_color));
             let border_rect = Rect {
                 x: inner_box_area.x,
                 y,
@@ -403,22 +538,61 @@ impl PromptArea {
             frame.render_widget(border_char, border_rect);
         }
 
-        // Draw contrasting background for the prompt box area
+        // Last row: ╹ for the left border
+        let last_border_char = Paragraph::new("╹").style(Style::default().fg(mode_color));
+        frame.render_widget(
+            last_border_char,
+            Rect {
+                x: inner_box_area.x,
+                y: last_row_y,
+                width: 1,
+                height: 1,
+            },
+        );
+
+        // Draw contrasting background for the prompt box area (excluding the last row)
         let shaded_area = Rect {
-            x: inner_box_area.x + 1, // After the left border
+            x: inner_box_area.x + 1,
             y: inner_box_area.y,
             width: inner_box_area.width.saturating_sub(1),
-            height: inner_box_area.height,
+            height: box_height.saturating_sub(1), // Exclude the last row
         };
-        let bg_block = Block::default().style(Style::default().bg(Color::Rgb(45, 45, 45))); // More contrasting background
+        let bg_block = Block::default().style(Style::default().bg(half_block_bg));
         frame.render_widget(bg_block, shaded_area);
+
+        // Last row: ▀ (upper half-block) for the background to the right of ╹
+        // First fill the entire row with app background (black)
+        let last_row_bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(
+            last_row_bg,
+            Rect {
+                x: inner_box_area.x + 1,
+                y: last_row_y,
+                width: inner_box_area.width.saturating_sub(1),
+                height: 1,
+            },
+        );
+
+        let half_row_width = inner_box_area.width.saturating_sub(1);
+        let half_row_line = "▀".repeat(half_row_width as usize);
+        let half_row_widget =
+            Paragraph::new(half_row_line).style(Style::default().fg(half_block_bg));
+        frame.render_widget(
+            half_row_widget,
+            Rect {
+                x: inner_box_area.x + 1,
+                y: last_row_y,
+                width: half_row_width,
+                height: 1,
+            },
+        );
 
         // Content area with 1 char padding from left (after border) and right
         let content_area = Rect {
             x: inner_box_area.x + 2, // 1 for border + 1 padding
             y: inner_box_area.y,
             width: inner_box_area.width.saturating_sub(3), // -1 border -2 padding
-            height: inner_box_area.height,
+            height: box_height.saturating_sub(1),          // Exclude the last row
         };
 
         // Split content: margin, textbox, margin, status
@@ -432,19 +606,19 @@ impl PromptArea {
             ])
             .split(content_area);
 
-        // Draw textbox (no prefix, full width)
+        // Draw textbox (indented to match "Plan" text)
         let textbox_area = Rect {
-            x: content_chunks[1].x,
+            x: content_chunks[1].x + 1, // +1 to align with "Plan" text (after the leading space)
             y: content_chunks[1].y,
-            width: content_chunks[1].width,
+            width: content_chunks[1].width.saturating_sub(1),
             height: content_chunks[1].height,
         };
         self.textbox.draw(frame, textbox_area, is_focused);
 
-        // Draw status line: yellow/blue "Plan"/"Build", white model, gray provider
+        // Draw status line: mode in accent color, text_normal, text_secondary
         let mode_style = Style::default().fg(mode_color).add_modifier(Modifier::BOLD);
-        let model_style = Style::default().fg(Color::White);
-        let provider_style = Style::default().fg(Color::DarkGray);
+        let model_style = Style::default().fg(theme.text_normal);
+        let provider_style = Style::default().fg(theme.text_secondary);
 
         let status_line = Line::from(vec![
             Span::styled(format!(" {} ", self.mode), mode_style),
@@ -455,12 +629,28 @@ impl PromptArea {
         ]);
         frame.render_widget(Paragraph::new(status_line), content_chunks[3]);
 
-        // Shortcuts line: "tab agents ctrl+p commands" with white keys and gray labels
+        // Fill shortcuts area background first
+        let shortcuts_bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(shortcuts_bg, shortcuts_area);
+
+        // Shortcuts line: "tab agents ctrl+p commands" with text_normal keys and text_secondary labels
         let shortcuts_line = Line::from(vec![
-            Span::styled("tab ", Style::default().fg(Color::White)),
-            Span::styled("agents ", Style::default().fg(Color::DarkGray)),
-            Span::styled("ctrl+p ", Style::default().fg(Color::White)),
-            Span::styled("commands", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "tab ",
+                Style::default().fg(theme.text_normal).bg(theme.app_bg),
+            ),
+            Span::styled(
+                "agents ",
+                Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+            ),
+            Span::styled(
+                "ctrl+p ",
+                Style::default().fg(theme.text_normal).bg(theme.app_bg),
+            ),
+            Span::styled(
+                "commands",
+                Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+            ),
         ]);
         frame.render_widget(
             Paragraph::new(shortcuts_line).alignment(ratatui::layout::Alignment::Right),
@@ -505,6 +695,8 @@ struct CodeViewerApp {
     main_content: MainContent,
     prompt_area: PromptArea,
     focus: FocusArea,
+    color_scheme: ColorScheme,
+    theme: Theme,
 }
 
 impl CodeViewerApp {
@@ -517,7 +709,41 @@ impl CodeViewerApp {
             main_content: MainContent::new(),
             prompt_area,
             focus: FocusArea::Prompt,
+            color_scheme: ColorScheme::Dark,
+            theme: Theme::adaptive(),
         }
+    }
+
+    /// Toggle between dark and light color schemes
+    #[allow(dead_code)]
+    fn toggle_color_scheme(&mut self) {
+        self.color_scheme = match self.color_scheme {
+            ColorScheme::Dark => ColorScheme::Light,
+            ColorScheme::Light => ColorScheme::Dark,
+        };
+    }
+
+    /// Set the color scheme
+    #[allow(dead_code)]
+    fn set_color_scheme(&mut self, scheme: ColorScheme) {
+        self.color_scheme = scheme;
+    }
+
+    /// Get current color scheme
+    #[allow(dead_code)]
+    fn color_scheme(&self) -> ColorScheme {
+        self.color_scheme
+    }
+
+    /// Check if current theme supports a specific color scheme
+    #[allow(dead_code)]
+    fn theme_supports(&self, scheme: ColorScheme) -> bool {
+        self.theme.supports_scheme(scheme)
+    }
+
+    /// Get the active theme variant based on current color scheme
+    fn active_theme(&self) -> &ThemeVariant {
+        self.theme.colors(self.color_scheme)
     }
 
     fn switch_focus(&mut self) {
@@ -553,18 +779,42 @@ impl CodeViewerApp {
 
 impl Component for CodeViewerApp {
     fn draw(&self, frame: &mut Frame, area: Rect, ctx: &DrawContext) {
-        // Layout: top bar, main area (content + sidebar), bottom prompt
+        let theme = self.active_theme();
+
+        // Create horizontal margin: 2 columns padding on left and right
+        let horizontal_margin = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(2), // Left padding
+                Constraint::Min(1),    // Main content area
+                Constraint::Length(2), // Right padding
+            ])
+            .split(area);
+
+        let main_area = horizontal_margin[1];
+
+        // Layout: top bar, main area (content + sidebar), bottom prompt, bottom padding
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1), // Top bar
                 Constraint::Min(10),   // Main area (content + sidebar)
-                Constraint::Length(6), // Bottom prompt area (5 for box + 1 for shortcuts)
+                Constraint::Length(6), // Bottom prompt area (5 for box with half-row bottom + 1 for shortcuts)
+                Constraint::Length(1), // Bottom padding row (empty, background filled)
             ])
-            .split(area);
+            .split(main_area);
+
+        // Fill left and right padding with background color
+        let padding_bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(padding_bg.clone(), horizontal_margin[0]);
+        frame.render_widget(padding_bg, horizontal_margin[2]);
 
         // Top bar
-        TopBar::draw(frame, main_chunks[0]);
+        TopBar::draw(frame, main_chunks[0], theme);
+
+        // Fill main area background with theme's app background before drawing content
+        let main_bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(main_bg.clone(), main_chunks[1]);
 
         // Main area: content + sidebar (right side)
         if self.sidebar.is_visible() {
@@ -577,19 +827,26 @@ impl Component for CodeViewerApp {
                 .split(main_chunks[1]);
 
             // Main content
-            self.main_content.draw(frame, content_chunks[0], ctx);
+            self.main_content.draw(frame, content_chunks[0], ctx, theme);
 
             // Sidebar (on the right)
             let sidebar_focused = self.is_focused(FocusArea::Sidebar);
-            self.sidebar.draw(frame, content_chunks[1], sidebar_focused);
+            self.sidebar
+                .draw(frame, content_chunks[1], sidebar_focused, theme);
         } else {
             // No sidebar, use full area for content
-            self.main_content.draw(frame, main_chunks[1], ctx);
+            self.main_content.draw(frame, main_chunks[1], ctx, theme);
         }
 
         // Bottom prompt area
         let prompt_focused = self.is_focused(FocusArea::Prompt);
-        self.prompt_area.draw(frame, main_chunks[2], prompt_focused);
+        self.prompt_area
+            .draw(frame, main_chunks[2], prompt_focused, theme);
+
+        // Bottom padding row - fill with theme's app background
+        let bottom_padding_area = main_chunks[3];
+        let bottom_padding = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(bottom_padding, bottom_padding_area);
     }
 
     fn handle_event(&mut self, event: &Event, ctx: &mut AppContext) -> EventResult {

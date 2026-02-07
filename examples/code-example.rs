@@ -833,9 +833,36 @@ impl Component for CodeViewerApp {
             let sidebar_focused = self.is_focused(FocusArea::Sidebar);
             self.sidebar
                 .draw(frame, content_chunks[1], sidebar_focused, theme);
+
+            // Draw toggle button in the border between content and sidebar
+            let toggle_y = main_chunks[1].y + main_chunks[1].height / 2;
+            let toggle_symbol = if self.sidebar.is_visible() { "-" } else { "+" };
+            let toggle_style = Style::default().fg(theme.text_secondary).bg(theme.app_bg);
+            frame.render_widget(
+                Paragraph::new(toggle_symbol).style(toggle_style),
+                Rect {
+                    x: content_chunks[0].x + content_chunks[0].width,
+                    y: toggle_y,
+                    width: 1,
+                    height: 1,
+                },
+            );
         } else {
             // No sidebar, use full area for content
             self.main_content.draw(frame, main_chunks[1], ctx, theme);
+
+            // Draw toggle button on the right edge
+            let toggle_y = main_chunks[1].y + main_chunks[1].height / 2;
+            let toggle_style = Style::default().fg(theme.text_secondary).bg(theme.app_bg);
+            frame.render_widget(
+                Paragraph::new("+").style(toggle_style),
+                Rect {
+                    x: main_chunks[1].x + main_chunks[1].width - 1,
+                    y: toggle_y,
+                    width: 1,
+                    height: 1,
+                },
+            );
         }
 
         // Bottom prompt area

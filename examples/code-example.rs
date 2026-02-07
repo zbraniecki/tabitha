@@ -8,7 +8,7 @@
 //!
 //! Controls:
 //! - Tab: Switch focus (main → sidebar → prompt)
-//! - b: Toggle sidebar visibility
+//! - Alt+/;: Toggle sidebar visibility
 //! - j/k or ↑/↓: Navigate TODO items
 //! - Space: Toggle checkbox
 //! - ↑/↓: Scroll main content
@@ -32,7 +32,8 @@ use tabitha::{
     widget::{
         Control, CursorAnimationMode, CursorFadeConfig, TextBox, TextBoxConfig, TextBoxEvent,
     },
-    AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, KeyCode, MainUi,
+    AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, KeyCode,
+    KeyModifiers, MainUi,
 };
 
 // =============================================================================
@@ -258,7 +259,7 @@ impl Sidebar {
                 TodoItem::new("Update documentation", false),
             ],
             active_index: 2, // Start on the active task
-            visible: true,
+            visible: false,
         }
     }
 
@@ -887,40 +888,9 @@ impl Component for CodeViewerApp {
             let sidebar_focused = self.is_focused(FocusArea::Sidebar);
             self.sidebar
                 .draw(frame, content_chunks[1], sidebar_focused, theme);
-
-            // Draw toggle button in the border between content and sidebar
-            let toggle_y = main_chunks[3].y + main_chunks[3].height / 2;
-            let toggle_symbol = if self.sidebar.is_visible() {
-                "[-]"
-            } else {
-                "[+]"
-            };
-            let toggle_style = Style::default().fg(theme.text_secondary).bg(theme.app_bg);
-            frame.render_widget(
-                Paragraph::new(toggle_symbol).style(toggle_style),
-                Rect {
-                    x: content_chunks[0].x + content_chunks[0].width,
-                    y: toggle_y,
-                    width: 3,
-                    height: 1,
-                },
-            );
         } else {
             // No sidebar, use full area for content
             self.main_content.draw(frame, main_chunks[3], ctx, theme);
-
-            // Draw toggle button on the right edge
-            let toggle_y = main_chunks[3].y + main_chunks[3].height / 2;
-            let toggle_style = Style::default().fg(theme.text_secondary).bg(theme.app_bg);
-            frame.render_widget(
-                Paragraph::new("[+]").style(toggle_style),
-                Rect {
-                    x: main_chunks[3].x + main_chunks[3].width - 3,
-                    y: toggle_y,
-                    width: 3,
-                    height: 1,
-                },
-            );
         }
 
         // Bottom prompt area
@@ -948,14 +918,14 @@ impl Component for CodeViewerApp {
                 return EventResult::Handled;
             }
 
-            // Toggle sidebar with 'b'
-            if key.code == KeyCode::Char('b') {
+            // Toggle sidebar with Ctrl+;
+            if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('/') {
                 self.sidebar.toggle();
                 return EventResult::Handled;
             }
 
             // Toggle log console with backtick (`)
-            if key.code == KeyCode::Char('`') {
+            if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('`') {
                 if let Some(mut overlays) = ctx.dev_overlays() {
                     overlays.toggle_log_viewer();
                 }

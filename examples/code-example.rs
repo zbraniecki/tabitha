@@ -241,10 +241,12 @@ impl MainContent {
         Self { scroll_offset: 0 }
     }
 
+    #[allow(dead_code)]
     fn scroll_up(&mut self, amount: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
+    #[allow(dead_code)]
     fn scroll_down(&mut self, amount: u16) {
         let max_scroll = LOREM_IPSUM.len().saturating_sub(1) as u16;
         self.scroll_offset = (self.scroll_offset + amount).min(max_scroll);
@@ -281,6 +283,7 @@ impl MainContent {
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 
+    #[allow(dead_code)]
     fn handle_event(&mut self, event: &Event, _ctx: &mut AppContext) -> EventResult {
         if let Event::Key(key) = event {
             match key.code {
@@ -471,11 +474,8 @@ impl PromptArea {
         // Process textbox events
         let events = self.textbox.take_events();
         for evt in events {
-            match evt {
-                TextBoxEvent::Submit(_text) => {
-                    // Handle submission - text is in _text
-                }
-                _ => {}
+            if let TextBoxEvent::Submit(_text) = evt {
+                // Handle submission - text is in _text
             }
         }
 
@@ -530,7 +530,6 @@ impl CodeViewerApp {
                 }
             }
             FocusArea::Sidebar => FocusArea::Prompt,
-            _ => FocusArea::Prompt,
         };
 
         // Update focus in textbox
@@ -545,12 +544,10 @@ impl CodeViewerApp {
     }
 
     fn is_focused(&self, area: FocusArea) -> bool {
-        match (&self.focus, area) {
-            (FocusArea::MainContent, FocusArea::MainContent) => true,
-            (FocusArea::Sidebar, FocusArea::Sidebar) => true,
-            (FocusArea::Prompt, FocusArea::Prompt) => true,
-            _ => false,
-        }
+        matches!(
+            (&self.focus, area),
+            (FocusArea::Sidebar, FocusArea::Sidebar) | (FocusArea::Prompt, FocusArea::Prompt)
+        )
     }
 }
 
@@ -624,7 +621,6 @@ impl Component for CodeViewerApp {
 
         // Route events to focused component
         match self.focus {
-            FocusArea::MainContent => self.main_content.handle_event(event, ctx),
             FocusArea::Sidebar => self.sidebar.handle_event(event, ctx),
             FocusArea::Prompt => self.prompt_area.handle_event(event, ctx),
         }

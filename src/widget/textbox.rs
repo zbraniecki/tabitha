@@ -72,18 +72,13 @@ pub enum TextBoxEvent {
 impl ControlEvent for TextBoxEvent {}
 
 /// Cursor shape options for the terminal cursor.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum CursorShape {
     /// Block cursor (█)
+    #[default]
     Block,
     /// Bar cursor (|)
     Bar,
-}
-
-impl Default for CursorShape {
-    fn default() -> Self {
-        CursorShape::Block
-    }
 }
 
 /// Configuration for TextBox appearance and behavior.
@@ -789,9 +784,6 @@ impl Control for TextBox {
         }
         let scroll_offset = self.scroll_offset.get();
 
-        // Check if we have full focus (widget-level AND terminal-level)
-        let has_full_focus = focused && self.terminal_focused;
-
         // Render text content without cursor characters
         if is_empty {
             // Empty text - show placeholder if available
@@ -826,39 +818,31 @@ impl Control for TextBox {
             .set(Some((cursor_screen_x, cursor_screen_y)));
 
         // Handle terminal cursor positioning and styling
-        if has_full_focus {
-            // Set terminal cursor position
+        if focused {
+            // Always set cursor position when textbox is focused
             frame.set_cursor_position(Position::new(cursor_screen_x, cursor_screen_y));
 
-            // Set cursor style based on configuration
-            let cursor_style_cmd = match self.config.cursor_shape {
-                CursorShape::Block => SetCursorStyle::BlinkingBlock,
-                CursorShape::Bar => SetCursorStyle::BlinkingBar,
-            };
-
-            // Execute cursor commands via crossterm
-            if let Err(e) = crossterm::execute!(std::io::stdout(), Show, cursor_style_cmd) {
-                tracing::warn!("Failed to set terminal cursor: {}", e);
-            }
-        } else {
-            // Widget not focused - show steady (non-blinking) cursor at last position
-            if let Some((x, y)) = self.cursor_screen_pos.get() {
-                frame.set_cursor_position(Position::new(x, y));
-
-                // Use steady (non-blinking) cursor style
+            if self.terminal_focused {
+                // Textbox focused + window active: show blinking cursor
                 let cursor_style_cmd = match self.config.cursor_shape {
-                    CursorShape::Block => SetCursorStyle::SteadyBlock,
-                    CursorShape::Bar => SetCursorStyle::SteadyBar,
+                    CursorShape::Block => SetCursorStyle::BlinkingBlock,
+                    CursorShape::Bar => SetCursorStyle::BlinkingBar,
                 };
 
                 if let Err(e) = crossterm::execute!(std::io::stdout(), Show, cursor_style_cmd) {
                     tracing::warn!("Failed to set terminal cursor: {}", e);
                 }
             } else {
-                // No cursor position stored - hide it
-                if let Err(e) = crossterm::execute!(std::io::stdout(), Hide) {
-                    tracing::warn!("Failed to hide terminal cursor: {}", e);
+                // Textbox focused + window inactive: show cursor but don't set style
+                // This allows terminal to show its default inactive (hollow) cursor
+                if let Err(e) = crossterm::execute!(std::io::stdout(), Show) {
+                    tracing::warn!("Failed to show terminal cursor: {}", e);
                 }
+            }
+        } else {
+            // Textbox not focused: hide cursor completely
+            if let Err(e) = crossterm::execute!(std::io::stdout(), Hide) {
+                tracing::warn!("Failed to hide terminal cursor: {}", e);
             }
         }
     }

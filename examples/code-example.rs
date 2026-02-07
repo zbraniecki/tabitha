@@ -52,6 +52,7 @@ enum ColorScheme {
 struct ThemeVariant {
     // Background colors
     app_bg: Color,
+    topbar_bg: Color,
     prompt_bg: Color,
     // Text colors
     text_normal: Color,
@@ -71,6 +72,7 @@ impl ThemeVariant {
     fn dark() -> Self {
         Self {
             app_bg: Color::Rgb(10, 10, 10),            // #0a0a0a
+            topbar_bg: Color::Rgb(20, 20, 20),         // #141414
             prompt_bg: Color::Rgb(30, 30, 30),         // #1e1e1e
             text_normal: Color::Rgb(255, 255, 255),    // Pure white
             text_secondary: Color::Rgb(115, 115, 115), // #737373
@@ -87,6 +89,7 @@ impl ThemeVariant {
     fn light() -> Self {
         Self {
             app_bg: Color::Rgb(245, 245, 245),    // Light gray
+            topbar_bg: Color::Rgb(235, 235, 235), // Slightly darker than app_bg
             prompt_bg: Color::Rgb(220, 220, 220), // Slightly darker gray
             text_normal: Color::Rgb(30, 30, 30),  // Dark text
             text_secondary: Color::Rgb(100, 100, 100),
@@ -440,32 +443,73 @@ struct TopBar;
 
 impl TopBar {
     fn draw(frame: &mut Frame, area: Rect, theme: &ThemeVariant) {
-        // Fill with app background first
-        let bg = Block::default().style(Style::default().bg(theme.app_bg));
-        frame.render_widget(bg, area);
+        let border_color = theme.text_secondary;
+        let bg_color = theme.topbar_bg;
 
-        // Left: Title
-        let title = Span::styled(
-            " OpenCode Editor ",
-            Style::default()
-                .fg(theme.text_normal)
-                .add_modifier(Modifier::BOLD)
-                .bg(theme.app_bg),
-        );
+        // Left border characters
+        let border_vertical = Paragraph::new("┃").style(Style::default().fg(border_color));
 
-        // Right: Context metrics
-        let metrics = Span::styled(
-            " 12.4K  45%  $0.023  v1.0.0 ",
-            Style::default().fg(theme.text_secondary).bg(theme.app_bg),
-        );
+        // Draw left border on all 3 rows
+        for y in area.y..area.y + area.height.min(3) {
+            let border_rect = Rect {
+                x: area.x,
+                y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(&border_vertical, border_rect);
+        }
 
-        let line = Line::from(vec![
-            title,
-            Span::styled("", Style::default().bg(theme.app_bg)),
-            metrics,
-        ]);
-        let paragraph = Paragraph::new(line);
-        frame.render_widget(paragraph, area);
+        // Content area (to the right of border, with 1-char right margin)
+        let content_area = Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: area.width.saturating_sub(2), // -1 for left border, -1 for right margin
+            height: area.height,
+        };
+
+        // Fill entire content area with topbar background
+        let bg = Block::default().style(Style::default().bg(bg_color));
+        frame.render_widget(bg, content_area);
+
+        // Middle row contains the title and metrics
+        if area.height >= 2 {
+            let middle_row_y = area.y + 1;
+            let content_width = content_area.width as usize;
+
+            // Left: Title
+            let title = "  # Title of the conversation";
+            // Right: Metrics
+            let metrics = "21,638 8% ($0.02) v1.1.53";
+
+            // Calculate spacing to right-align metrics
+            let spacing = content_width.saturating_sub(title.len() + metrics.len());
+            let spacer = " ".repeat(spacing);
+
+            let line = Line::from(vec![
+                Span::styled(
+                    title,
+                    Style::default()
+                        .fg(theme.text_normal)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(bg_color),
+                ),
+                Span::styled(spacer, Style::default().bg(bg_color)),
+                Span::styled(
+                    metrics,
+                    Style::default().fg(theme.text_secondary).bg(bg_color),
+                ),
+            ]);
+
+            let middle_row_area = Rect {
+                x: content_area.x,
+                y: middle_row_y,
+                width: content_area.width,
+                height: 1,
+            };
+            let paragraph = Paragraph::new(line);
+            frame.render_widget(paragraph, middle_row_area);
+        }
     }
 }
 
@@ -793,11 +837,13 @@ impl Component for CodeViewerApp {
 
         let main_area = horizontal_margin[1];
 
-        // Layout: top bar, main area (content + sidebar), bottom prompt, bottom padding
+        // Layout: top margin, top bar, margin, main area (content + sidebar), bottom prompt, bottom padding
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // Top bar
+                Constraint::Length(1), // Top margin
+                Constraint::Length(3), // Top bar (padding + content + padding)
+                Constraint::Length(1), // Margin between topbar and content
                 Constraint::Min(10),   // Main area (content + sidebar)
                 Constraint::Length(6), // Bottom prompt area (5 for box with half-row bottom + 1 for shortcuts)
                 Constraint::Length(1), // Bottom padding row (empty, background filled)
@@ -809,12 +855,20 @@ impl Component for CodeViewerApp {
         frame.render_widget(padding_bg.clone(), horizontal_margin[0]);
         frame.render_widget(padding_bg, horizontal_margin[2]);
 
+        // Fill top margin with app background
+        let top_margin = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(top_margin, main_chunks[0]);
+
         // Top bar
-        TopBar::draw(frame, main_chunks[0], theme);
+        TopBar::draw(frame, main_chunks[1], theme);
+
+        // Fill margin between topbar and content with app background
+        let mid_margin = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(mid_margin, main_chunks[2]);
 
         // Fill main area background with theme's app background before drawing content
         let main_bg = Block::default().style(Style::default().bg(theme.app_bg));
-        frame.render_widget(main_bg.clone(), main_chunks[1]);
+        frame.render_widget(main_bg.clone(), main_chunks[3]);
 
         // Main area: content + sidebar (right side)
         if self.sidebar.is_visible() {
@@ -824,7 +878,7 @@ impl Component for CodeViewerApp {
                     Constraint::Percentage(75), // Main content
                     Constraint::Percentage(25), // Sidebar (right)
                 ])
-                .split(main_chunks[1]);
+                .split(main_chunks[3]);
 
             // Main content
             self.main_content.draw(frame, content_chunks[0], ctx, theme);
@@ -835,31 +889,35 @@ impl Component for CodeViewerApp {
                 .draw(frame, content_chunks[1], sidebar_focused, theme);
 
             // Draw toggle button in the border between content and sidebar
-            let toggle_y = main_chunks[1].y + main_chunks[1].height / 2;
-            let toggle_symbol = if self.sidebar.is_visible() { "-" } else { "+" };
+            let toggle_y = main_chunks[3].y + main_chunks[3].height / 2;
+            let toggle_symbol = if self.sidebar.is_visible() {
+                "[-]"
+            } else {
+                "[+]"
+            };
             let toggle_style = Style::default().fg(theme.text_secondary).bg(theme.app_bg);
             frame.render_widget(
                 Paragraph::new(toggle_symbol).style(toggle_style),
                 Rect {
                     x: content_chunks[0].x + content_chunks[0].width,
                     y: toggle_y,
-                    width: 1,
+                    width: 3,
                     height: 1,
                 },
             );
         } else {
             // No sidebar, use full area for content
-            self.main_content.draw(frame, main_chunks[1], ctx, theme);
+            self.main_content.draw(frame, main_chunks[3], ctx, theme);
 
             // Draw toggle button on the right edge
-            let toggle_y = main_chunks[1].y + main_chunks[1].height / 2;
+            let toggle_y = main_chunks[3].y + main_chunks[3].height / 2;
             let toggle_style = Style::default().fg(theme.text_secondary).bg(theme.app_bg);
             frame.render_widget(
-                Paragraph::new("+").style(toggle_style),
+                Paragraph::new("[+]").style(toggle_style),
                 Rect {
-                    x: main_chunks[1].x + main_chunks[1].width - 1,
+                    x: main_chunks[3].x + main_chunks[3].width - 3,
                     y: toggle_y,
-                    width: 1,
+                    width: 3,
                     height: 1,
                 },
             );
@@ -868,10 +926,10 @@ impl Component for CodeViewerApp {
         // Bottom prompt area
         let prompt_focused = self.is_focused(FocusArea::Prompt);
         self.prompt_area
-            .draw(frame, main_chunks[2], prompt_focused, theme);
+            .draw(frame, main_chunks[4], prompt_focused, theme);
 
         // Bottom padding row - fill with theme's app background
-        let bottom_padding_area = main_chunks[3];
+        let bottom_padding_area = main_chunks[5];
         let bottom_padding = Block::default().style(Style::default().bg(theme.app_bg));
         frame.render_widget(bottom_padding, bottom_padding_area);
     }
@@ -893,6 +951,22 @@ impl Component for CodeViewerApp {
             // Toggle sidebar with 'b'
             if key.code == KeyCode::Char('b') {
                 self.sidebar.toggle();
+                return EventResult::Handled;
+            }
+
+            // Toggle log console with backtick (`)
+            if key.code == KeyCode::Char('`') {
+                if let Some(mut overlays) = ctx.dev_overlays() {
+                    overlays.toggle_log_viewer();
+                }
+                return EventResult::Handled;
+            }
+
+            // Toggle debug panel with F12
+            if key.code == KeyCode::F(12) {
+                if let Some(mut overlays) = ctx.dev_overlays() {
+                    overlays.toggle_debug_panel();
+                }
                 return EventResult::Handled;
             }
 

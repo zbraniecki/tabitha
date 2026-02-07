@@ -33,8 +33,120 @@ use tabitha::{
         Control, CursorAnimationMode, CursorFadeConfig, TextBox, TextBoxConfig, TextBoxEvent,
     },
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, KeyCode,
-    KeyModifiers, MainUi,
+    KeyModifiers, MainUi, Task, TaskContext, TaskSender,
 };
+
+// =============================================================================
+// Network Connection Manager Task
+// =============================================================================
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum NetworkMessage {
+    Connected,
+    RequestSent,
+    Thinking,
+    Responding(String),
+    Waiting,
+    Disconnected,
+}
+
+struct NetworkTask {
+    control: NetworkControl,
+}
+
+impl NetworkTask {
+    fn new(control: NetworkControl) -> Self {
+        Self { control }
+    }
+}
+
+impl Task for NetworkTask {
+    type Message = NetworkMessage;
+    type Error = std::convert::Infallible;
+
+    async fn run(
+        self,
+        sender: TaskSender<Self::Message>,
+        mut ctx: TaskContext,
+    ) -> Result<(), Self::Error> {
+        // Simulate connection establishment
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if sender.send(NetworkMessage::Connected).await.is_err() {
+            return Ok(());
+        }
+
+        // Main loop - wait for requests and process them
+        loop {
+            tokio::select! {
+                _ = ctx.cancelled() => {
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    // Check for pending requests using the control
+                    if self.control.has_pending_request() {
+                        self.control.clear_request();
+                        
+                        // Process the request
+                        if sender.send(NetworkMessage::RequestSent).await.is_err() {
+                            break;
+                        }
+
+                        // Thinking phase (1 second)
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if sender.send(NetworkMessage::Thinking).await.is_err() {
+                            break;
+                        }
+
+                        // Responding phase (2 seconds with content streaming)
+                        let response_text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.";
+
+                        for word in response_text.split_whitespace() {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            if sender.send(NetworkMessage::Responding(word.to_string())).await.is_err() {
+                                break;
+                            }
+                        }
+
+                        // Waiting phase
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        if sender.send(NetworkMessage::Waiting).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// External control for network task
+#[derive(Clone)]
+struct NetworkControl {
+    has_pending_request: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl NetworkControl {
+    fn new() -> Self {
+        Self {
+            has_pending_request: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn send_request(&self) {
+        self.has_pending_request.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn has_pending_request(&self) -> bool {
+        self.has_pending_request.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn clear_request(&self) {
+        self.has_pending_request.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 // =============================================================================
 // ColorScheme and Theme System
@@ -159,6 +271,7 @@ impl Theme {
 // Mock Data
 // =============================================================================
 
+#[allow(dead_code)]
 const LOREM_IPSUM: &[&str] = &[
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
     "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
@@ -181,6 +294,198 @@ const LOREM_IPSUM: &[&str] = &[
     "Velit esse quam nihil molestiae consequatur, vel illum qui dolorem.",
     "Eum fugiat quo voluptas nulla pariatur? At vero eos et accusamus.",
 ];
+
+// =============================================================================
+// Participant System (Extensible for multiple users/agents)
+// =============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+enum Participant {
+    User { id: usize, name: String },
+    Assistant { id: usize, name: String },
+    Agent { id: usize, name: String },
+}
+
+#[allow(dead_code)]
+impl Participant {
+    fn user(id: usize) -> Self {
+        Participant::User {
+            id,
+            name: format!("User {}", id),
+        }
+    }
+
+    fn assistant(id: usize) -> Self {
+        Participant::Assistant {
+            id,
+            name: format!("Assistant {}", id),
+        }
+    }
+
+    fn agent(id: usize) -> Self {
+        Participant::Agent {
+            id,
+            name: format!("Agent {}", id),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Participant::User { name, .. } => name,
+            Participant::Assistant { name, .. } => name,
+            Participant::Agent { name, .. } => name,
+        }
+    }
+
+    fn color(&self, theme: &ThemeVariant) -> Color {
+        match self {
+            Participant::User { id: 1, .. } => theme.text_highlight,
+            Participant::User { id: 2, .. } => Color::Magenta,
+            Participant::Assistant { .. } => theme.accent_primary,
+            Participant::Agent { id: 1, .. } => Color::Green,
+            Participant::Agent { id: 2, .. } => Color::Blue,
+            _ => theme.text_normal,
+        }
+    }
+}
+
+fn current_user() -> Participant {
+    Participant::user(1)
+}
+
+fn current_assistant() -> Participant {
+    Participant::assistant(1)
+}
+
+// =============================================================================
+// Message Model
+// =============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+enum MessageState {
+    Thinking,
+    Responding,
+    Waiting,
+    Complete,
+}
+
+struct Message {
+    participant: Participant,
+    content: String,
+    state: MessageState,
+}
+
+#[allow(dead_code)]
+impl Message {
+    fn new(participant: Participant, content: impl Into<String>) -> Self {
+        Self {
+            participant,
+            content: content.into(),
+            state: MessageState::Complete,
+        }
+    }
+
+    fn thinking(participant: Participant) -> Self {
+        Self {
+            participant,
+            content: String::new(),
+            state: MessageState::Thinking,
+        }
+    }
+
+    fn is_thinking(&self) -> bool {
+        matches!(self.state, MessageState::Thinking)
+    }
+
+    fn is_responding(&self) -> bool {
+        matches!(self.state, MessageState::Responding)
+    }
+
+    fn is_waiting(&self) -> bool {
+        matches!(self.state, MessageState::Waiting)
+    }
+
+    fn set_thinking(&mut self) {
+        self.state = MessageState::Thinking;
+    }
+
+    fn set_responding(&mut self) {
+        self.state = MessageState::Responding;
+    }
+
+    fn set_waiting(&mut self) {
+        self.state = MessageState::Waiting;
+    }
+
+    fn complete(&mut self, content: impl Into<String>) {
+        self.content = content.into();
+        self.state = MessageState::Complete;
+    }
+}
+
+// =============================================================================
+// Session Model
+// =============================================================================
+
+struct Session {
+    #[allow(dead_code)]
+    participants: Vec<Participant>,
+    history: Vec<Message>,
+    scroll_offset: usize,
+}
+
+#[allow(dead_code)]
+impl Session {
+    fn new() -> Self {
+        Self {
+            participants: vec![current_user(), current_assistant()],
+            history: Vec::new(),
+            scroll_offset: 0,
+        }
+    }
+
+    fn add_message(&mut self, participant: Participant, content: impl Into<String>) {
+        let msg = Message::new(participant, content);
+        self.history.push(msg);
+        self.scroll_to_bottom();
+    }
+
+    fn add_thinking_message(&mut self, participant: Participant) -> usize {
+        let msg = Message::thinking(participant);
+        self.history.push(msg);
+        self.scroll_to_bottom();
+        self.history.len() - 1
+    }
+
+    fn update_message_content(&mut self, idx: usize, content: impl Into<String>) {
+        if let Some(msg) = self.history.get_mut(idx) {
+            msg.content = content.into();
+        }
+    }
+
+    fn set_message_state(&mut self, idx: usize, state: MessageState) {
+        if let Some(msg) = self.history.get_mut(idx) {
+            msg.state = state;
+        }
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        // Scroll offset is now in lines from the top
+        // When content overflows, we want to show from the bottom
+        // So we set scroll_offset to a large value (will be clamped in draw)
+        self.scroll_offset = usize::MAX;
+    }
+
+    fn scroll_up(&mut self, amount: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(amount);
+    }
+}
 
 // =============================================================================
 // TODO Item
@@ -352,63 +657,204 @@ impl Sidebar {
 }
 
 // =============================================================================
-// Main Content Component
+// Conversation Component
 // =============================================================================
 
-struct MainContent {
-    scroll_offset: u16,
+#[allow(dead_code)]
+struct Conversation {
+    messages: Vec<Message>,
+    scroll_offset: usize,
+    lorem_index: usize,
 }
 
-impl MainContent {
+#[allow(dead_code)]
+impl Conversation {
     fn new() -> Self {
-        Self { scroll_offset: 0 }
+        Self {
+            messages: Vec::new(),
+            scroll_offset: 0,
+            lorem_index: 0,
+        }
     }
 
-    #[allow(dead_code)]
-    fn scroll_up(&mut self, amount: u16) {
+    fn add_user_message(&mut self, content: impl Into<String>) {
+        let msg = Message::new(current_user(), content);
+        self.messages.push(msg);
+        self.scroll_to_bottom();
+    }
+
+    fn add_assistant_thinking(&mut self) {
+        let msg = Message::thinking(current_assistant());
+        self.messages.push(msg);
+        self.scroll_to_bottom();
+    }
+
+    fn complete_assistant_message(&mut self, content: impl Into<String>) {
+        if let Some(last_msg) = self.messages.last_mut() {
+            if last_msg.is_thinking() {
+                last_msg.complete(content);
+            }
+        }
+    }
+
+    fn get_next_lorem_response(&mut self) -> String {
+        let start_idx = self.lorem_index % LOREM_IPSUM.len();
+        let end_idx = (start_idx + 3).min(LOREM_IPSUM.len());
+        let lines: Vec<&str> = LOREM_IPSUM[start_idx..end_idx].to_vec();
+        self.lorem_index = end_idx;
+        lines.join("\n")
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = self.messages.len().saturating_sub(1);
+    }
+
+    fn scroll_up(&mut self, amount: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
-    #[allow(dead_code)]
-    fn scroll_down(&mut self, amount: u16) {
-        let max_scroll = LOREM_IPSUM.len().saturating_sub(1) as u16;
+    fn scroll_down(&mut self, amount: usize) {
+        let max_scroll = self.messages.len().saturating_sub(1);
         self.scroll_offset = (self.scroll_offset + amount).min(max_scroll);
     }
 
     fn draw(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext, theme: &ThemeVariant) {
-        let block = Block::default()
-            .borders(Borders::NONE)
-            .style(Style::default().bg(theme.app_bg));
+        // Fill background
+        let bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(bg, area);
 
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
+        if self.messages.is_empty() {
+            return;
+        }
 
-        // Get visible lines
-        let visible_lines = inner.height as usize;
-        let start_idx = self.scroll_offset as usize;
-        let end_idx = (start_idx + visible_lines).min(LOREM_IPSUM.len());
+        // Calculate layout for messages
+        let mut current_y = area.y;
+        let mut message_areas: Vec<(usize, Rect)> = Vec::new();
 
-        let lines: Vec<Line> = LOREM_IPSUM[start_idx..end_idx]
-            .iter()
-            .map(|text| {
-                Line::from(Span::styled(
-                    text.to_string(),
-                    Style::default().fg(theme.text_normal).bg(theme.app_bg),
-                ))
-            })
-            .collect();
+        for (idx, _msg) in self.messages.iter().enumerate().skip(self.scroll_offset) {
+            if current_y >= area.y + area.height {
+                break;
+            }
 
-        let paragraph = Paragraph::new(lines);
-        frame.render_widget(paragraph, inner);
+            // Padding above
+            current_y += 1;
+
+            // Message box - calculate height based on content
+            // Minimum height: 3 lines (padding + content + padding)
+            let content_lines = if let Some(msg) = self.messages.get(idx) {
+                if msg.state == MessageState::Complete {
+                    msg.content.lines().count().max(1)
+                } else {
+                    1 // Thinking/Responding/Waiting states show single line
+                }
+            } else {
+                1
+            };
+            let msg_height = (content_lines as u16 + 2).min(area.y + area.height - current_y); // +2 for padding
+            
+            let msg_area = Rect {
+                x: area.x,
+                y: current_y,
+                width: area.width,
+                height: msg_height,
+            };
+            message_areas.push((idx, msg_area));
+
+            current_y += msg_area.height + 1; // +1 for padding below
+        }
+
+        // Draw each message
+        for (idx, msg_area) in message_areas {
+            if let Some(msg) = self.messages.get(idx) {
+                self.draw_message(frame, msg_area, msg, theme);
+            }
+        }
 
         // Draw scrollbar
-        let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-        let mut scrollbar_state =
-            ScrollbarState::new(LOREM_IPSUM.len()).position(self.scroll_offset as usize);
-        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        if self.messages.len() > 1 {
+            let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+            let mut scrollbar_state = ScrollbarState::new(self.messages.len()).position(self.scroll_offset);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 
-    #[allow(dead_code)]
+    fn draw_message(&self, frame: &mut Frame, area: Rect, msg: &Message, theme: &ThemeVariant) {
+        let accent_color = msg.participant.color(theme);
+
+        // Draw left border for all rows in the message box
+        let border_style = Style::default().fg(accent_color);
+        for y in area.y..area.y + area.height {
+            let border_rect = Rect {
+                x: area.x,
+                y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new("┃").style(border_style),
+                border_rect,
+            );
+        }
+
+        // Content area (to the right of border, with top padding)
+        // Minimum box height is 3: padding + content + padding
+        let content_area = Rect {
+            x: area.x + 1,
+            y: area.y + 1, // +1 for top padding
+            width: area.width.saturating_sub(1),
+            height: area.height.saturating_sub(2), // -2 for top and bottom padding
+        };
+
+        // Fill the entire box area with background
+        let box_bg = Block::default().style(Style::default().bg(theme.app_bg));
+        let box_area = Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: area.width.saturating_sub(1),
+            height: area.height,
+        };
+        frame.render_widget(box_bg, box_area);
+
+        let state_text = if msg.is_thinking() {
+            "Thinking"
+        } else if msg.is_responding() {
+            "Responding"
+        } else if msg.is_waiting() {
+            "Waiting"
+        } else {
+            ""
+        };
+
+        if !state_text.is_empty() {
+            // Show state in light grey
+            let line = Line::from(vec![
+                Span::styled(
+                    state_text,
+                    Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+                ),
+            ]);
+            let paragraph = Paragraph::new(line);
+            frame.render_widget(paragraph, content_area);
+        } else {
+            // Show message content
+            let content_lines: Vec<Line> = msg
+                .content
+                .lines()
+                .take(content_area.height as usize)
+                .map(|line| {
+                    Line::from(vec![
+                        Span::styled(
+                            line.to_string(),
+                            Style::default().fg(theme.text_normal).bg(theme.app_bg),
+                        ),
+                    ])
+                })
+                .collect();
+            let paragraph = Paragraph::new(content_lines);
+            frame.render_widget(paragraph, content_area);
+        }
+    }
+
     fn handle_event(&mut self, event: &Event, _ctx: &mut AppContext) -> EventResult {
         if let Event::Key(key) = event {
             match key.code {
@@ -523,6 +969,7 @@ struct PromptArea {
     mode: &'static str,
     model: &'static str,
     provider: &'static str,
+    submitted_text: Option<String>,
 }
 
 impl PromptArea {
@@ -543,7 +990,12 @@ impl PromptArea {
             mode: "Plan",
             model: "Kimi K2.5",
             provider: "OpenRouter",
+            submitted_text: None,
         }
+    }
+
+    fn take_submitted_text(&mut self) -> Option<String> {
+        self.submitted_text.take()
     }
 
     fn draw(&self, frame: &mut Frame, area: Rect, is_focused: bool, theme: &ThemeVariant) {
@@ -709,8 +1161,10 @@ impl PromptArea {
         // Process textbox events
         let events = self.textbox.take_events();
         for evt in events {
-            if let TextBoxEvent::Submit(_text) = evt {
-                // Handle submission - text is in _text
+            if let TextBoxEvent::Submit(text) = evt {
+                // Store submitted text and clear the textbox
+                self.submitted_text = Some(text);
+                self.textbox.clear();
             }
         }
 
@@ -737,11 +1191,15 @@ enum FocusArea {
 
 struct CodeViewerApp {
     sidebar: Sidebar,
-    main_content: MainContent,
+    sessions: Vec<Session>,
+    current_session: usize,
     prompt_area: PromptArea,
     focus: FocusArea,
     color_scheme: ColorScheme,
     theme: Theme,
+    network_control: NetworkControl,
+    connected: bool,
+    current_message_idx: Option<usize>,
 }
 
 impl CodeViewerApp {
@@ -751,12 +1209,38 @@ impl CodeViewerApp {
 
         Self {
             sidebar: Sidebar::new(),
-            main_content: MainContent::new(),
+            sessions: vec![Session::new()],
+            current_session: 0,
             prompt_area,
             focus: FocusArea::Prompt,
             color_scheme: ColorScheme::Dark,
             theme: Theme::adaptive(),
+            network_control: NetworkControl::new(),
+            connected: false,
+            current_message_idx: None,
         }
+    }
+
+    fn network_control(&self) -> NetworkControl {
+        self.network_control.clone()
+    }
+
+    fn submit_message(&mut self, text: String, _ctx: &mut AppContext) {
+        if text.trim().is_empty() {
+            return;
+        }
+
+        let session = &mut self.sessions[self.current_session];
+
+        // Add user message to session history
+        session.add_message(current_user(), &text);
+
+        // Add assistant thinking message
+        let assistant_idx = session.add_thinking_message(current_assistant());
+
+        // Signal network task to send request
+        self.network_control.send_request();
+        self.current_message_idx = Some(assistant_idx);
     }
 
     /// Toggle between dark and light color schemes
@@ -820,6 +1304,180 @@ impl CodeViewerApp {
             (FocusArea::Sidebar, FocusArea::Sidebar) | (FocusArea::Prompt, FocusArea::Prompt)
         )
     }
+
+    fn draw_session(&self, frame: &mut Frame, area: Rect, _ctx: &DrawContext, theme: &ThemeVariant) {
+        let session = &self.sessions[self.current_session];
+        
+        // Fill background
+        let bg = Block::default().style(Style::default().bg(theme.app_bg));
+        frame.render_widget(bg, area);
+
+        if session.history.is_empty() {
+            return;
+        }
+
+        // Calculate total height needed for all messages
+        let mut total_height: u16 = 0;
+        let message_heights: Vec<u16> = session.history.iter().map(|msg| {
+            let content_lines = if msg.state == MessageState::Complete {
+                msg.content.lines().count().max(1)
+            } else {
+                1
+            };
+            (content_lines as u16 + 2) + 1 // +2 for padding, +1 for spacing below
+        }).collect();
+        
+        for height in &message_heights {
+            total_height += *height;
+        }
+        // Remove the last spacing (no padding after last message)
+        total_height = total_height.saturating_sub(1);
+
+        let available_height = area.height;
+        
+        // Calculate how much we need to scroll
+        // If content fits: no scroll needed, start from top
+        // If content overflows: scroll to show bottom, unless user scrolled up
+        let overflow = total_height.saturating_sub(available_height);
+        
+        // scroll_offset is how many lines user scrolled up from bottom
+        // Clamp it to valid range
+        let max_scroll_offset = overflow as usize;
+        let scroll_offset = session.scroll_offset.min(max_scroll_offset);
+        
+        // Calculate starting Y position
+        // Start from top normally, or from (top - overflow + scroll_offset) when overflowing
+        let start_y = if overflow == 0 {
+            area.y
+        } else {
+            // Start high enough so the bottom of content is at the bottom of area
+            // Then subtract scroll_offset to allow scrolling up
+            area.y.saturating_sub(overflow) + (scroll_offset as u16)
+        };
+
+        // Draw messages
+        let mut current_y = start_y;
+        let mut message_areas: Vec<(usize, Rect)> = Vec::new();
+
+        for (idx, msg_height) in message_heights.iter().enumerate() {
+            // Skip if completely above visible area
+            if current_y + *msg_height <= area.y {
+                current_y += *msg_height;
+                continue;
+            }
+            
+            // Stop if completely below visible area
+            if current_y >= area.y + area.height {
+                break;
+            }
+
+            // Calculate visible portion
+            let visible_y = current_y.max(area.y);
+            let visible_height = (*msg_height - (visible_y - current_y))
+                .min(area.y + area.height - visible_y);
+            
+            let msg_area = Rect {
+                x: area.x,
+                y: visible_y,
+                width: area.width,
+                height: visible_height,
+            };
+            message_areas.push((idx, msg_area));
+
+            current_y += *msg_height;
+        }
+
+        // Draw each message
+        for (idx, msg_area) in message_areas {
+            if let Some(msg) = session.history.get(idx) {
+                self.draw_message(frame, msg_area, msg, theme);
+            }
+        }
+
+        // Draw scrollbar if content overflows
+        if overflow > 0 {
+            let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+            let mut scrollbar_state = ScrollbarState::new(max_scroll_offset + 1).position(scroll_offset);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
+    }
+
+    fn draw_message(&self, frame: &mut Frame, area: Rect, msg: &Message, theme: &ThemeVariant) {
+        let accent_color = msg.participant.color(theme);
+
+        // Draw left border for all rows in the message box
+        let border_style = Style::default().fg(accent_color);
+        for y in area.y..area.y + area.height {
+            let border_rect = Rect {
+                x: area.x,
+                y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new("┃").style(border_style),
+                border_rect,
+            );
+        }
+
+        // Content area (to the right of border, with top padding)
+        // Minimum box height is 3: padding + content + padding
+        let content_area = Rect {
+            x: area.x + 1,
+            y: area.y + 1, // +1 for top padding
+            width: area.width.saturating_sub(1),
+            height: area.height.saturating_sub(2), // -2 for top and bottom padding
+        };
+
+        // Fill the entire box area with background
+        let box_bg = Block::default().style(Style::default().bg(theme.app_bg));
+        let box_area = Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: area.width.saturating_sub(1),
+            height: area.height,
+        };
+        frame.render_widget(box_bg, box_area);
+
+        let state_text = if msg.is_thinking() {
+            "Thinking"
+        } else if msg.is_responding() {
+            "Responding"
+        } else if msg.is_waiting() {
+            "Waiting"
+        } else {
+            ""
+        };
+
+        if !state_text.is_empty() {
+            // Show state in light grey
+            let line = Line::from(vec![
+                Span::styled(
+                    state_text,
+                    Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+                ),
+            ]);
+            let paragraph = Paragraph::new(line);
+            frame.render_widget(paragraph, content_area);
+        } else {
+            // Show message content
+            let content_lines: Vec<Line> = msg
+                .content
+                .lines()
+                .take(content_area.height as usize)
+                .map(|line| {
+                    Line::from(vec![
+                        Span::styled(
+                            line.to_string(),
+                            Style::default().fg(theme.text_normal).bg(theme.app_bg),
+                        ),
+                    ])
+                })
+                .collect();
+            let paragraph = Paragraph::new(content_lines);
+            frame.render_widget(paragraph, content_area);
+        }
+    }
 }
 
 impl Component for CodeViewerApp {
@@ -881,16 +1539,16 @@ impl Component for CodeViewerApp {
                 ])
                 .split(main_chunks[3]);
 
-            // Main content
-            self.main_content.draw(frame, content_chunks[0], ctx, theme);
+            // Session conversation
+            self.draw_session(frame, content_chunks[0], ctx, theme);
 
             // Sidebar (on the right)
             let sidebar_focused = self.is_focused(FocusArea::Sidebar);
             self.sidebar
                 .draw(frame, content_chunks[1], sidebar_focused, theme);
         } else {
-            // No sidebar, use full area for content
-            self.main_content.draw(frame, main_chunks[3], ctx, theme);
+            // No sidebar, use full area for conversation
+            self.draw_session(frame, main_chunks[3], ctx, theme);
         }
 
         // Bottom prompt area
@@ -948,10 +1606,17 @@ impl Component for CodeViewerApp {
         }
 
         // Route events to focused component
-        match self.focus {
+        let result = match self.focus {
             FocusArea::Sidebar => self.sidebar.handle_event(event, ctx),
             FocusArea::Prompt => self.prompt_area.handle_event(event, ctx),
+        };
+
+        // Check for submitted message from prompt
+        if let Some(text) = self.prompt_area.take_submitted_text() {
+            self.submit_message(text, ctx);
         }
+
+        result
     }
 
     fn tick(&mut self, ctx: &mut AppContext) -> bool {
@@ -959,7 +1624,65 @@ impl Component for CodeViewerApp {
     }
 }
 
-impl MainUi for CodeViewerApp {}
+impl MainUi for CodeViewerApp {
+    fn handle_task_message(
+        &mut self,
+        task_name: &str,
+        message: Box<dyn std::any::Any + Send>,
+        _ctx: &mut AppContext,
+    ) -> bool {
+        if task_name == "network" {
+            if let Some(msg) = message.downcast_ref::<NetworkMessage>() {
+                let session = &mut self.sessions[self.current_session];
+                
+                match msg {
+                    NetworkMessage::Connected => {
+                        self.connected = true;
+                        return true;
+                    }
+                    NetworkMessage::RequestSent => {
+                        // Request has been sent, waiting for response
+                        return true;
+                    }
+                    NetworkMessage::Thinking => {
+                        // Assistant is thinking
+                        if let Some(idx) = self.current_message_idx {
+                            session.set_message_state(idx, MessageState::Thinking);
+                        }
+                        return true;
+                    }
+                    NetworkMessage::Responding(content) => {
+                        // Assistant is responding with content - accumulate words
+                        if let Some(idx) = self.current_message_idx {
+                            session.set_message_state(idx, MessageState::Responding);
+                            if let Some(msg) = session.history.get_mut(idx) {
+                                if !msg.content.is_empty() {
+                                    msg.content.push(' ');
+                                }
+                                msg.content.push_str(content);
+                            }
+                        }
+                        return true;
+                    }
+                    NetworkMessage::Waiting => {
+                        // Response complete, mark as complete to show content
+                        if let Some(idx) = self.current_message_idx {
+                            session.set_message_state(idx, MessageState::Complete);
+                        }
+                        self.current_message_idx = None;
+                        self.network_control.clear_request();
+                        return true;
+                    }
+                    NetworkMessage::Disconnected => {
+                        self.connected = false;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
 
 // =============================================================================
 // Main
@@ -970,9 +1693,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let log_rx = args.init_tracing();
 
+    // Create app state first to get network control
+    let app_state = CodeViewerApp::new();
+    let network_control = app_state.network_control();
+
     // Build the application
     let app = AppBuilder::new()
-        .main_ui(CodeViewerApp::new())
+        .main_ui(app_state)
+        .add_task("network", NetworkTask::new(network_control))
         .tick_rate(Duration::from_millis(100))
         .mouse_capture(false)
         .with_log_receiver(log_rx)

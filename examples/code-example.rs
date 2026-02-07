@@ -30,7 +30,8 @@ use ratatui::{
 };
 use tabitha::{
     widget::{
-        Control, CursorAnimationMode, CursorFadeConfig, TextBox, TextBoxConfig, TextBoxEvent,
+        CometBar, Control, CursorAnimationMode, CursorFadeConfig, TextBox, TextBoxConfig,
+        TextBoxEvent,
     },
     AppBuilder, AppContext, CanQuit, Component, DrawContext, Event, EventResult, KeyCode,
     KeyModifiers, MainUi, Task, TaskContext, TaskSender,
@@ -970,6 +971,8 @@ struct PromptArea {
     model: &'static str,
     provider: &'static str,
     submitted_text: Option<String>,
+    comet_bar: CometBar,
+    is_thinking: bool,
 }
 
 impl PromptArea {
@@ -982,6 +985,8 @@ impl PromptArea {
             ..TextBoxConfig::default()
         };
 
+        let mode_color = Color::Yellow; // Default "Plan" color
+
         Self {
             textbox: TextBox::builder("prompt")
                 .placeholder("Type your message here...")
@@ -991,6 +996,8 @@ impl PromptArea {
             model: "Kimi K2.5",
             provider: "OpenRouter",
             submitted_text: None,
+            comet_bar: CometBar::new().with_color(mode_color),
+            is_thinking: false,
         }
     }
 
@@ -1130,25 +1137,56 @@ impl PromptArea {
         let shortcuts_bg = Block::default().style(Style::default().bg(theme.app_bg));
         frame.render_widget(shortcuts_bg, shortcuts_area);
 
-        // Shortcuts line: "tab agents ctrl+p commands" with text_normal keys and text_secondary labels
-        let shortcuts_line = Line::from(vec![
-            Span::styled(
-                "tab ",
-                Style::default().fg(theme.text_normal).bg(theme.app_bg),
-            ),
-            Span::styled(
-                "agents ",
-                Style::default().fg(theme.text_secondary).bg(theme.app_bg),
-            ),
-            Span::styled(
-                "ctrl+p ",
-                Style::default().fg(theme.text_normal).bg(theme.app_bg),
-            ),
-            Span::styled(
-                "commands",
-                Style::default().fg(theme.text_secondary).bg(theme.app_bg),
-            ),
-        ]);
+        // Build the left side: comet bar only (always visible for testing)
+        let left_side_width = 10; // 8 for comet + 2 margins
+        let left_side_area = Rect {
+            x: shortcuts_area.x,
+            y: shortcuts_area.y,
+            width: left_side_width,
+            height: shortcuts_area.height,
+        };
+
+        // Draw comet bar (8 chars wide)
+        let comet_area = Rect {
+            x: left_side_area.x,
+            y: left_side_area.y,
+            width: 8,
+            height: left_side_area.height,
+        };
+        self.comet_bar.draw(frame, comet_area, false);
+
+        // Shortcuts line: "esc interrupt tab agents ctrl+p commands"
+        let mut right_spans = vec![];
+
+        // Always show esc + interrupt for testing
+        right_spans.push(Span::styled(
+            " esc ",
+            Style::default().fg(theme.text_normal).bg(theme.app_bg),
+        ));
+        right_spans.push(Span::styled(
+            "interrupt ",
+            Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+        ));
+
+        // Original shortcuts
+        right_spans.push(Span::styled(
+            "tab ",
+            Style::default().fg(theme.text_normal).bg(theme.app_bg),
+        ));
+        right_spans.push(Span::styled(
+            "agents ",
+            Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+        ));
+        right_spans.push(Span::styled(
+            "ctrl+p ",
+            Style::default().fg(theme.text_normal).bg(theme.app_bg),
+        ));
+        right_spans.push(Span::styled(
+            "commands",
+            Style::default().fg(theme.text_secondary).bg(theme.app_bg),
+        ));
+
+        let shortcuts_line = Line::from(right_spans);
         frame.render_widget(
             Paragraph::new(shortcuts_line).alignment(ratatui::layout::Alignment::Right),
             shortcuts_area,
@@ -1172,10 +1210,22 @@ impl PromptArea {
     }
 
     fn tick(&mut self, ctx: &mut AppContext) -> bool {
+        let mut needs_redraw = false;
+
         if let Some(mut anim_ctx) = ctx.control_animations() {
-            self.textbox.tick(&mut anim_ctx)
-        } else {
-            false
+            needs_redraw |= self.textbox.tick(&mut anim_ctx);
+
+            // Always animate comet bar for testing
+            needs_redraw |= self.comet_bar.tick(&mut anim_ctx);
+        }
+
+        needs_redraw
+    }
+
+    fn set_thinking(&mut self, thinking: bool, mode_color: Color) {
+        self.is_thinking = thinking;
+        if thinking {
+            self.comet_bar = CometBar::new().with_color(mode_color);
         }
     }
 }
@@ -1241,6 +1291,14 @@ impl CodeViewerApp {
         // Signal network task to send request
         self.network_control.send_request();
         self.current_message_idx = Some(assistant_idx);
+
+        // Show comet bar
+        let mode_color = if self.prompt_area.mode == "Plan" {
+            self.active_theme().accent_primary
+        } else {
+            self.active_theme().accent_secondary
+        };
+        self.prompt_area.set_thinking(true, mode_color);
     }
 
     /// Toggle between dark and light color schemes
@@ -1649,6 +1707,13 @@ impl MainUi for CodeViewerApp {
                         if let Some(idx) = self.current_message_idx {
                             session.set_message_state(idx, MessageState::Thinking);
                         }
+                        // Show comet bar
+                        let mode_color = if self.prompt_area.mode == "Plan" {
+                            self.active_theme().accent_primary
+                        } else {
+                            self.active_theme().accent_secondary
+                        };
+                        self.prompt_area.set_thinking(true, mode_color);
                         return true;
                     }
                     NetworkMessage::Responding(content) => {
@@ -1671,6 +1736,13 @@ impl MainUi for CodeViewerApp {
                         }
                         self.current_message_idx = None;
                         self.network_control.clear_request();
+                        // Hide comet bar
+                        let mode_color = if self.prompt_area.mode == "Plan" {
+                            self.active_theme().accent_primary
+                        } else {
+                            self.active_theme().accent_secondary
+                        };
+                        self.prompt_area.set_thinking(false, mode_color);
                         return true;
                     }
                     NetworkMessage::Disconnected => {

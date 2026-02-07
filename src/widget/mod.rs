@@ -47,6 +47,7 @@
 //! }
 //! ```
 
+mod comet_bar;
 mod datatable;
 mod debug_panel;
 mod dev_console;
@@ -54,10 +55,12 @@ mod dev_overlay;
 pub mod log_viewer;
 mod modal;
 mod progress_bar;
+mod spinner;
 mod tab_bar;
 mod tab_content;
 mod textbox;
 
+pub use comet_bar::{CometBar, CometBarConfig, CometBarEvent};
 pub use datatable::{
     Column, ColumnAlign, ColumnType, ColumnWidth, DataTable, DataTableConfig, DataTableEvent,
     SelectionMode, SimpleRow, SortDirection, SortState, TableRow,
@@ -70,6 +73,7 @@ pub use modal::{Modal, ModalButton, ModalConfig, ModalInput, ModalManager, Modal
 pub use progress_bar::{
     IndeterminateStyle, LabelPosition, ProgressBar, ProgressBarConfig, ProgressBarEvent,
 };
+pub use spinner::{Spinner, SpinnerConfig, SpinnerEvent};
 pub use tab_bar::TabBar;
 pub use tab_content::TabContent;
 pub use textbox::{CursorShape, TextBox, TextBoxBuilder, TextBoxConfig, TextBoxEvent};

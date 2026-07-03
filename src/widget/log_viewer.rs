@@ -17,6 +17,7 @@
 
 use std::collections::VecDeque;
 
+use crossterm::event::KeyEventKind;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -194,7 +195,7 @@ impl LogViewer {
         }
 
         match event {
-            Event::Key(key_event) => {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match key_event.code {
                     // Tab cycles forward through level filters
                     KeyCode::Tab => {

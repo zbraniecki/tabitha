@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::EventStream;
+use crossterm::event::{EventStream, KeyEventKind};
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
@@ -545,7 +545,7 @@ impl<M: MainUi + 'static> App<M> {
                     tracing::trace!(?event, "input_processor: received terminal event");
 
                     // For key events, apply rate limiting
-                    if matches!(event, Event::Key(_)) {
+                    if matches!(event, Event::Key(key_event) if key_event.kind == KeyEventKind::Press) {
                         let now = Instant::now();
 
                         // Check if enough time has passed since last key event
@@ -824,6 +824,8 @@ impl<M: MainUi + 'static> App<M> {
         {
             if terminal.mouse_capture_enabled() {
                 // Handle mouse events for selection
+
+                use crossterm::event::KeyEventKind;
                 if let Event::Mouse(mouse_event) = event {
                     if self.selection_manager.handle_mouse_event(mouse_event) {
                         // Selection consumed the event
@@ -832,7 +834,7 @@ impl<M: MainUi + 'static> App<M> {
                 }
 
                 // Handle Ctrl+C when selection is active (copy instead of quit)
-                if let Event::Key(key) = event {
+                if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
                     if key.code == crate::event::KeyCode::Char('c')
                         && key.modifiers.contains(crate::event::KeyModifiers::CONTROL)
                         && self.selection_manager.has_selection()

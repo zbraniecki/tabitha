@@ -2,6 +2,7 @@
 //!
 //! This module implements the Control trait for DataTable.
 
+use crossterm::event::KeyEventKind;
 use ratatui::{
     layout::Rect,
     text::Line,
@@ -190,7 +191,7 @@ impl<R: TableRow + 'static> Control for DataTable<R> {
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResult {
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 // Row navigation
                 KeyCode::Up | KeyCode::Char('k') => match self.selection_mode {

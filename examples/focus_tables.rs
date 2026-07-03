@@ -18,6 +18,7 @@ mod common;
 use clap::Parser;
 use common::Args;
 
+use crossterm::event::KeyEventKind;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -238,7 +239,7 @@ impl Component for DataTab {
     }
 
     fn handle_event(&mut self, event: &Event, _ctx: &mut AppContext) -> EventResult {
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 // Switch focus between tables
                 KeyCode::Left => {
@@ -335,7 +336,7 @@ impl Component for FocusTablesApp {
             return EventResult::Handled;
         }
 
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('q') => {
                     ctx.quit();

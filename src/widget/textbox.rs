@@ -30,7 +30,7 @@
 use std::cell::Cell;
 use std::time::Instant;
 
-use crossterm::cursor::{Hide, SetCursorStyle, Show};
+use crossterm::{cursor::{Hide, SetCursorStyle, Show}, event::KeyEventKind};
 use ratatui::{
     layout::{Position, Rect},
     style::{Color, Style},
@@ -849,7 +849,7 @@ impl Control for TextBox {
 
     fn handle_event(&mut self, event: &Event) -> EventResult {
         match event {
-            Event::Key(key) => {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
                 // Emit KeyDown event
                 self.emit(TextBoxEvent::KeyDown(key.code));
 

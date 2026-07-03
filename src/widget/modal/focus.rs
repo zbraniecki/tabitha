@@ -19,7 +19,9 @@ pub enum ModalFocus {
 /// This module extracts common event handling code between Modal and ModalManager
 /// to avoid duplication.
 pub mod event_handlers {
-    use super::*;
+    use crossterm::event::KeyEventKind;
+
+use super::*;
 
     /// Handle navigation keys that work in both input and button contexts.
     pub fn handle_navigation_keys<T>(
@@ -30,7 +32,7 @@ pub mod event_handlers {
     where
         T: ModalNavigation,
     {
-        if let crate::event::Event::Key(key_event) = key {
+        if let crate::event::Event::Key(key_event) = key && key_event.kind == KeyEventKind::Press {
             match key_event.code {
                 // Tab -> next element
                 KeyCode::Tab if !key_event.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -80,7 +82,7 @@ pub mod event_handlers {
     where
         T: ModalInputHandlers,
     {
-        if let crate::event::Event::Key(key_event) = key {
+        if let crate::event::Event::Key(key_event) = key && key_event.kind == KeyEventKind::Press {
             match key_event.code {
                 KeyCode::Char(c) => {
                     modal.handle_input_char(c);
@@ -131,7 +133,7 @@ pub mod event_handlers {
     where
         T: ModalButtonHandlers,
     {
-        if let crate::event::Event::Key(key_event) = key {
+        if let crate::event::Event::Key(key_event) = key  && key_event.kind == KeyEventKind::Press {
             match key_event.code {
                 KeyCode::Enter | KeyCode::Char(' ') => {
                     modal.activate_focused_button();

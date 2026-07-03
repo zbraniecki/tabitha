@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crossterm::event::KeyEventKind;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -298,7 +299,7 @@ impl Component for CounterApp {
         }
 
         // Handle specific key presses
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             let has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
             match key.code {

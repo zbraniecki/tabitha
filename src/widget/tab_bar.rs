@@ -35,6 +35,7 @@
 //! }
 //! ```
 
+use crossterm::event::KeyEventKind;
 use ratatui::{layout::Rect, text::Line, widgets::Tabs as RatatuiTabs, Frame};
 
 use crate::context::traits::HasTabs;
@@ -124,7 +125,7 @@ impl TabBar {
     /// ```
     pub fn handle_event(event: &Event, ctx: &mut AppContext) -> EventResult {
         match event {
-            Event::Key(key) => match key.code {
+            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 // Tab for next tab
                 KeyCode::Tab => {
                     ctx.tabs().select_next();

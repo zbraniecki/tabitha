@@ -23,6 +23,7 @@ mod common;
 use clap::Parser;
 use common::Args;
 
+use crossterm::event::KeyEventKind;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -347,7 +348,7 @@ impl Component for DataTableApp {
 
         // Handle filter mode
         if self.filter_active {
-            if let Event::Key(key) = event {
+            if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
                 match key.code {
                     KeyCode::Esc => {
                         // Exit filter mode
@@ -368,7 +369,7 @@ impl Component for DataTableApp {
         }
 
         // Normal mode
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('q') => {
                     ctx.quit();

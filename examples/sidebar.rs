@@ -23,6 +23,7 @@ mod common;
 use clap::Parser;
 use common::Args;
 
+use crossterm::event::KeyEventKind;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -279,7 +280,7 @@ impl Component for SidebarApp {
             return EventResult::Handled;
         }
 
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('q') => {
                     ctx.quit();

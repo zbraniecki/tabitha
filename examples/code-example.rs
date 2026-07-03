@@ -18,6 +18,7 @@
 mod common;
 use clap::Parser;
 use common::Args;
+use crossterm::event::KeyEventKind;
 
 use std::time::Duration;
 
@@ -635,7 +636,7 @@ impl Sidebar {
     }
 
     fn handle_event(&mut self, event: &Event, _ctx: &mut AppContext) -> EventResult {
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.prev_item();
@@ -857,7 +858,7 @@ impl Conversation {
     }
 
     fn handle_event(&mut self, event: &Event, _ctx: &mut AppContext) -> EventResult {
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.scroll_up(1);
@@ -1628,7 +1629,7 @@ impl Component for CodeViewerApp {
         }
 
         // Handle Tab to switch focus
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             if key.code == KeyCode::Tab {
                 self.switch_focus();
                 return EventResult::Handled;

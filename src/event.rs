@@ -4,7 +4,7 @@
 
 pub use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crossterm::event::{Event as CrosstermEvent, KeyEvent};
+use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind};
 
 use crate::bus::TaskMessage;
 
@@ -34,15 +34,17 @@ impl Event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c') | KeyCode::Char('q'),
                 modifiers: KeyModifiers::CONTROL,
+                kind: k,
                 ..
             })
+            if *k == KeyEventKind::Press
         )
     }
 
     /// Check if this is a specific key press
     #[inline]
     pub fn is_key(&self, code: KeyCode) -> bool {
-        matches!(self, Event::Key(KeyEvent { code: c, .. }) if *c == code)
+        matches!(self, Event::Key(KeyEvent { code: c, kind: k, .. }) if *c == code && *k == KeyEventKind::Press)
     }
 
     /// Check if this is a key press with modifiers
@@ -50,7 +52,7 @@ impl Event {
     pub fn is_key_with_modifiers(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         matches!(
             self,
-            Event::Key(KeyEvent { code: c, modifiers: m, .. }) if *c == code && *m == modifiers
+            Event::Key(KeyEvent { code: c, modifiers: m, kind: k, .. }) if *c == code && *m == modifiers && *k == KeyEventKind::Press
         )
     }
 

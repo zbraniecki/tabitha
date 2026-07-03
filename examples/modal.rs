@@ -24,6 +24,7 @@
 mod common;
 use clap::Parser;
 use common::Args;
+use crossterm::event::KeyEventKind;
 
 use std::time::Duration;
 
@@ -230,7 +231,7 @@ impl Component for ModalExample {
         }
 
         // Handle keyboard shortcuts to open modals
-        if let Event::Key(key) = event {
+        if let Event::Key(key) = event && key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('1') => {
                     ctx.focus().clear_focus(); // Clear focus from main content when opening modal
